@@ -1,4 +1,5 @@
 import os
+import sys
 import pandas as pd
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
@@ -27,11 +28,21 @@ class CombinedDRDataSet(Dataset):
         # to track which dataset each image comes from
         self.sources = []
 
+        if "MFIDDR" in self.root_directories:
+            self.load_MFIDDR()
+        if "IDRID" in self.root_directories:
+            self.load_IDRID()
+        if "DEEPDRID" in self.root_directories:
+            self.load_DEEPDRID()
+
     def __len__(self) -> int:
         return len(self.image_paths)
 
     def load_MFIDDR(self):
-        MFIDDR_ROOT = Path(self.root_directories["mfiddr"])
+        MFIDDR_ROOT = Path(self.root_directories["MFIDDR"])
+
+        print(f"\nMFIDDR_ROOT: {MFIDDR_ROOT}")
+        print(f"MFIDDR_ROOT exists: {MFIDDR_ROOT.exists()}")
 
         if self.split == "train":
             image_dir = MFIDDR_ROOT / 'sample' / 'train-examples'
@@ -45,14 +56,19 @@ class CombinedDRDataSet(Dataset):
 
         for image_file_path in os.listdir(image_dir):
             filename, file_extension = os.path.splitext(image_file_path)
+            file_extension = file_extension.lstrip('.').lower()
             if file_extension in valid_file_extensions:
-                self.image_paths.append(str(image_file_path))
+                self.image_paths.append(str(image_dir / image_file_path)) 
                 self.labels.append(filename)
-                self.sources.append("mfiddr")
+                self.sources.append("MFIDDR")
 
     def load_IDRID(self):
-        IDRID_root = Path(self.root_dirs["idrid"])
+        IDRID_root = Path(self.root_directories["IDRID"])
         base_path = IDRID_root / 'B-Disease-Grading' / 'Disease-Grading' / '1-Original-Images'
+
+        
+        print(f"\nIDRID: {IDRID_root}")
+        print(f"IDRID exists: {IDRID_root.exists()}")
 
         if self.split == "train":
             image_dir = base_path / 'Training_Set'
@@ -64,29 +80,50 @@ class CombinedDRDataSet(Dataset):
 
         for image_file_path in os.listdir(image_dir):
             filename, file_extension = os.path.splitext(image_file_path)
+            file_extension = file_extension.lstrip('.').lower()
             if file_extension in valid_file_extensions:
-                self.image_paths.append(str(image_file_path))
+                self.image_paths.append(str(image_dir / image_file_path))
                 self.labels.append(filename)
-                self.sources.append("idrid")
+                self.sources.append("IDRID")
 
     def load_DEEPDRID(self):
-        DEEPDRID_root = Path(self.root_dirs["deepdrid"])
-
+        DEEPDRID_root = Path(self.root_directories["DEEPDRID"])
+        
+        print(f"\nDEEPDRID_root: {DEEPDRID_root}")
+        print(f"DEEPDRID_root exists: {DEEPDRID_root.exists()}")
+        
         if self.split == "train":
-            image_dir = DEEPDRID_root / "regular_fundus_images" / "regular_fundus_training"
-            # image_dir2 = DEEPDRID_root / "regular_fundus_images" / "regular_fundus_validation"
+            base_dir = DEEPDRID_root / "regular_fundus_images" / "regular-fundus-training" / "Images"
         else:
-            image_dir = DEEPDRID_root / "regular_fundus_images" / "Online-Challenge1&2-Evaluation"
-
-        if not image_dir.exists():
-            print(f"ERROR: MFIDDR path not found at {image_dir}")
-
-        for image_file_path in os.listdir(image_dir):
-            filename, file_extension = os.path.splitext(image_file_path)
-            if file_extension in valid_file_extensions:
-                self.image_paths.append(str(image_file_path))
-                self.labels.append(filename)
-                self.sources.append("deepdrid")
+            base_dir = DEEPDRID_root / "regular_fundus_images" / "Online-Challenge1&2-Evaluation"
+        
+        print(f"Looking for images in: {base_dir}")
+        print(f"Directory exists: {base_dir.exists()}")
+        
+        if not base_dir.exists():
+            print(f"ERROR: DEEPDRID path not found at {base_dir}")
+            return
+        
+        loaded_count = 0
+        # Iterate through numbered subdirectories (1, 2, 3, ...)
+        for subdir in os.listdir(base_dir):
+            subdir_path = base_dir / subdir
+            
+            # each image is inside a nested folder
+            if not subdir_path.is_dir():
+                continue
+            
+            # Now iterate through images in each subdirectory
+            for image_file_path in os.listdir(subdir_path):
+                filename, file_extension = os.path.splitext(image_file_path)
+                file_extension = file_extension.lstrip('.').lower()
+                
+                if file_extension in valid_file_extensions:
+                    full_image_path = subdir_path / image_file_path
+                    self.image_paths.append(str(full_image_path))
+                    self.labels.append(filename)
+                    self.sources.append("DEEPDRID")
+                    loaded_count += 1
 
     def extract_label_deepdr(self, filename: str):
         return 0
@@ -97,19 +134,47 @@ class CombinedDRDataSet(Dataset):
     def extract_label_idrid(self, filename: str):
         return 0
     
-    def load_labels_from_csv(self, csv_paths_dict: Dict[str, str]): # {'dataset name': 'path_to_labels.csv'}
+    def load_labels_from_csv(self, csv_paths_dict: Dict[str, str]):
+        
+        # pre-populating labels list with None values
+        if len(self.labels) == 0:
+            self.labels = [None] * len(self.image_paths)
+        
         for dataset_name, csv_path in csv_paths_dict.items():
+            # checking if the CSV file exists
             if not os.path.exists(csv_path):
-                print(FileNotFoundError, f"at path {csv_path}")
+                print(f"FileNotFoundError: CSV not found at {csv_path}")
+                continue
+            
+            # loading the csv
             labels_df = pd.read_csv(csv_path)
+            print(f"Loaded labels for {dataset_name}: {len(labels_df)} rows")
 
-            for index, (img_path, source) in enumerate(zip(self.image_paths, self.sources)):
-                if source == dataset_name:
-                    filename = Path(img_path).stem
-                    # matching filename to the csv and updating the model
-                    if filename in labels_df["image_id"].values:
-                        label = labels_df[labels_df["image_id"]] == filename["grade"].values[0]
-                        self.labels[index] = label
+            print(labels_df.tail(5))
+            
+        #     # Create lookup dictionary for faster matching
+        #     label_dict = dict(zip(labels_df["image_id"], labels_df["grade"]))
+            
+        #     # matching images to their labels
+        #     matched_count = 0
+        #     for index, (img_path, source) in enumerate(zip(self.image_paths, self.sources)):
+        #         if source == dataset_name:
+        #             filename = Path(img_path).stem
+                    
+        #             if filename in label_dict:
+        #                 self.labels[index] = label_dict[filename]
+        #                 matched_count += 1
+        #             else:
+        #                 print(f"Warning: No label found for {filename}")
+            
+        #     print(f"Matched {matched_count} images from {dataset_name}")
+        
+        # # Validate all images have labels
+        # missing_labels = sum(1 for label in self.labels if label is None)
+        # if missing_labels > 0:
+        #     print(f"WARNING: {missing_labels} images missing labels!")
+        
+        # return self.labels
 
 
     def __getitem__(self, index) -> Tuple[torch.Tensor, int, str]:
@@ -140,4 +205,6 @@ class CombinedDRDataSet(Dataset):
             "distribution_of_labels": dict(count_labels),
             "split": self.split
         }
-        
+
+    def get_labels(self):
+        return self.labels

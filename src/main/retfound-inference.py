@@ -26,9 +26,9 @@ if __name__ == "__main__":
     BASE_PATH = "../../datasets/IDRID/B-Disease-Grading/Disease-Grading/2-Groundtruths"
 
     root_directories = {
-        "DEEPDRID": "../../datasets/DeepDRiD",
-        "IDRID": "../../datasets/IDRID",
-        "MFIDDR": "../../datasets/MFIDDR" 
+        "DEEPDRID": "D:/Zayaan/D_git/Eval-Foundation-Models-DiabeticRetinopathy-Grading/datasets/DEEPDRID",
+        "IDRID": "D:/Zayaan/D_git/Eval-Foundation-Models-DiabeticRetinopathy-Grading/datasets/IDRID",
+        "MFIDDR": "D:/Zayaan/D_git/Eval-Foundation-Models-DiabeticRetinopathy-Grading/datasets/MFIDDR" 
     }
 
     train_transformations = transforms.Compose([
@@ -54,6 +54,9 @@ if __name__ == "__main__":
     train_dataset = CombinedDRDataSet(root_directories=root_directories, split="train", img_transform=train_transformations)
     test_dataset = CombinedDRDataSet(root_directories=root_directories, split="test", img_transform=test_transformations)
 
+
+    print("Labels", train_dataset.get_labels())
+
     # loading csv_paths
     train_csv_paths = {
         "IDRID": f"{root_directories['IDRID']}/B-Disease-Grading/Disease-Grading/2-Groundtruths/IDRiD_Disease_Grading_Training_Labels.csv",
@@ -61,21 +64,26 @@ if __name__ == "__main__":
         "MFIDDR": f"{root_directories['MFIDDR']}/sample/train_fourpic_label.csv"
     }
 
-    test_csv_paths = {
-        "IDRID": f"{root_directories['IDRID']}/B-Disease-Grading/Disease-Grading/2-Groundtruths/IDRiD_Disease_Grading_Testing_Labels.csv",
-        "DEEPDRID": f"{root_directories['DEEPDRID']}/regular_fundus_images/regular-fundus-validation/regular-fundus-validation.csv",
-        "MFIDDR": f"{root_directories['MFIDDR']}/sample/test_fourpic_label.csv"
-    }
+    # test_csv_paths = {
+    #     "IDRID": f"{root_directories['IDRID']}/B-Disease-Grading/Disease-Grading/2-Groundtruths/IDRiD_Disease_Grading_Testing_Labels.csv",
+    #     "DEEPDRID": f"{root_directories['DEEPDRID']}/regular_fundus_images/regular-fundus-validation/regular-fundus-validation.csv",
+    #     "MFIDDR": f"{root_directories['MFIDDR']}/sample/test_fourpic_label.csv"
+    # }
 
     train_dataset.load_labels_from_csv(train_csv_paths)
-    train_dataset.load_labels_from_csv(test_csv_paths)
+    # train_dataset.load_labels_from_csv(test_csv_paths)
+
+
+    print("TRAIN DATASET LENGTH:", train_dataset.__len__()) # 11/11/25 len is 0 for both hence there is error in data preprocessing 
+    # print("TEST DATASET LENGTH:", test_dataset.__len__())
+
 
 
     # printing dataset statistics
     print("Training Set Statistics:")
     print(train_dataset.get_dataset_statistics())
-    print("\nTest Set Statistics:")
-    print(test_dataset.get_dataset_statistics())
+    # print("\nTest Set Statistics:")
+    # print(test_dataset.get_dataset_statistics())
 
     train_loader = DataLoader(
         train_dataset,
@@ -84,18 +92,13 @@ if __name__ == "__main__":
         num_workers=4
     )
     
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=32,
-        shuffle=False,
-        num_workers=4
-    )
+    # test_loader = DataLoader(
+    #     test_dataset,
+    #     batch_size=32,
+    #     shuffle=False,
+    #     num_workers=4
+    # )
     
-    # Test loading a batch
-    images, labels, sources = next(iter(train_loader))
-    print(f"\nBatch shape: {images.shape}")
-    print(f"Labels: {labels}")
-    print(f"Sources: {sources}")
 
 
 
@@ -126,5 +129,3 @@ if __name__ == "__main__":
     # # initializing fc layer
     # trunc_normal_(model.head.weight, std=2e-5)
     # print("Model = %s" % str(models_vit))
-
-
