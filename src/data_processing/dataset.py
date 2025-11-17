@@ -134,47 +134,53 @@ class CombinedDRDataSet(Dataset):
     def extract_label_idrid(self, filename: str):
         return 0
     
+
     def load_labels_from_csv(self, csv_paths_dict: Dict[str, str]):
-        
-        # pre-populating labels list with None values
         if len(self.labels) == 0:
             self.labels = [None] * len(self.image_paths)
-        
+
         for dataset_name, csv_path in csv_paths_dict.items():
-            # checking if the CSV file exists
+            print(dataset_name)
             if not os.path.exists(csv_path):
                 print(f"FileNotFoundError: CSV not found at {csv_path}")
                 continue
-            
-            # loading the csv
+        
             labels_df = pd.read_csv(csv_path)
             print(f"Loaded labels for {dataset_name}: {len(labels_df)} rows")
-
-            print(labels_df.tail(5))
+        
+            # Create lookup dictionary based on dataset format (INDENTED INSIDE LOOP)
+            if dataset_name == "IDRID":
+                label_dict = dict(zip(labels_df["Image name"], labels_df["Retinopathy grade"]))
+           
+            elif dataset_name == "DEEPDRID":
+                label_dict = dict(zip(labels_df["image_id"], labels_df["patient_DR_Level"])) 
             
-        #     # Create lookup dictionary for faster matching
-        #     label_dict = dict(zip(labels_df["image_id"], labels_df["grade"]))
+            elif dataset_name == "MFIDDR":
+                label_dict = dict(zip(labels_df["id"], labels_df["level"]))
+                print(f"Sample CSV keys: {list(label_dict.keys())[:5]}")
+                mfiddr_images = [Path(img_path).stem for img_path, source in zip(self.image_paths, self.sources) if source == "MFIDDR"]
+                print(f"Sample image filenames: {mfiddr_images[:5]}")
             
-        #     # matching images to their labels
-        #     matched_count = 0
-        #     for index, (img_path, source) in enumerate(zip(self.image_paths, self.sources)):
-        #         if source == dataset_name:
-        #             filename = Path(img_path).stem
+            matched_count = 0
+            for index, (img_path, source) in enumerate(zip(self.image_paths, self.sources)):
+                if source == dataset_name:
+                    filename = Path(img_path).stem
+                    if dataset_name == "MFIDDR":
+                        # splitting by underscore and taking first 3 parts for mfiddr to remove suffix
+                        parts = filename.split('_')
+                        if len(parts) >= 3:
+                            filename = '_'.join(parts[:3])  # e.g. "20_28096452_left" for mfiddr
                     
-        #             if filename in label_dict:
-        #                 self.labels[index] = label_dict[filename]
-        #                 matched_count += 1
-        #             else:
-        #                 print(f"Warning: No label found for {filename}")
+                    if filename in label_dict:
+                        self.labels[index] = label_dict[filename]
+                        matched_count += 1
+                    else:
+                        print(f"Warning: No label found for {filename}")
             
-        #     print(f"Matched {matched_count} images from {dataset_name}")
-        
-        # # Validate all images have labels
-        # missing_labels = sum(1 for label in self.labels if label is None)
-        # if missing_labels > 0:
-        #     print(f"WARNING: {missing_labels} images missing labels!")
-        
-        # return self.labels
+            print(f"Matched {matched_count} images from {dataset_name}")
+
+            return csv_paths_dict
+
 
 
     def __getitem__(self, index) -> Tuple[torch.Tensor, int, str]:
@@ -189,7 +195,7 @@ class CombinedDRDataSet(Dataset):
             print("Image transform -> None")
         
         if self.label_transform is None:
-            print("Label trasnform -> None")
+            print("Label transform -> None")
         
         image_trans = self.img_transform(image)
         label_trans = self.label_transform(label)
