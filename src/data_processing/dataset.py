@@ -136,70 +136,77 @@ class CombinedDRDataSet(Dataset):
     
 
     def load_labels_from_csv(self, csv_paths_dict: Dict[str, str]):
-        if len(self.labels) == 0:
-            self.labels = [None] * len(self.image_paths)
+            if len(self.labels) == 0:
+                self.labels = [None] * len(self.image_paths)
 
-        for dataset_name, csv_path in csv_paths_dict.items():
-            print(dataset_name)
-            if not os.path.exists(csv_path):
-                print(f"FileNotFoundError: CSV not found at {csv_path}")
-                continue
-        
-            labels_df = pd.read_csv(csv_path)
-            print(f"Loaded labels for {dataset_name}: {len(labels_df)} rows")
-        
-            # Create lookup dictionary based on dataset format (INDENTED INSIDE LOOP)
-            if dataset_name == "IDRID":
-                label_dict = dict(zip(labels_df["Image name"], labels_df["Retinopathy grade"]))
-           
-            elif dataset_name == "DEEPDRID":
-                label_dict = dict(zip(labels_df["image_id"], labels_df["patient_DR_Level"])) 
+            for dataset_name, csv_path in csv_paths_dict.items():
+                print(f"\n--- Processing {dataset_name} ---")
+                if not os.path.exists(csv_path):
+                    print(f"FileNotFoundError: CSV not found at {csv_path}")
+                    continue
             
-            elif dataset_name == "MFIDDR":
-                label_dict = dict(zip(labels_df["id"], labels_df["level"]))
-                print(f"Sample CSV keys: {list(label_dict.keys())[:5]}")
-                mfiddr_images = [Path(img_path).stem for img_path, source in zip(self.image_paths, self.sources) if source == "MFIDDR"]
-                print(f"Sample image filenames: {mfiddr_images[:5]}")
+                labels_df = pd.read_csv(csv_path)
+                print(f"Loaded CSV: {len(labels_df)} rows")
             
-            matched_count = 0
-            for index, (img_path, source) in enumerate(zip(self.image_paths, self.sources)):
-                if source == dataset_name:
-                    filename = Path(img_path).stem
-                    if dataset_name == "MFIDDR":
-                        # splitting by underscore and taking first 3 parts for mfiddr to remove suffix
-                        parts = filename.split('_')
-                        if len(parts) >= 3:
-                            filename = '_'.join(parts[:3])  # e.g. "20_28096452_left" for mfiddr
-                    
-                    if filename in label_dict:
-                        self.labels[index] = label_dict[filename]
-                        matched_count += 1
-                    else:
-                        print(f"Warning: No label found for {filename}")
-            
-            print(f"Matched {matched_count} images from {dataset_name}")
+                label_dict = {}
+                
+                if dataset_name == "IDRID":
+                    label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["Image name"], labels_df["Retinopathy grade"])}
+                
+                elif dataset_name == "DEEPDRID":
+                    label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["image_id"], labels_df["patient_DR_Level"])}
+                
+                elif dataset_name == "MFIDDR":
+                    print("Building MFIDDR dictionary from columns id1-id4...")
+                    for _, row in labels_df.iterrows():
+                        try:
+                            grade = int(row['level'])
+                            # Check columns id1, id2, id3, id4
+                            for col in ['id1', 'id2', 'id3', 'id4']:
+                                if col in row and pd.notna(row[col]):
+                                    image_name = str(row[col]).strip()
+                                    label_dict[image_name] = grade
+                        except ValueError:
+                            continue
+
+                print(f"DEBUG: First 3 keys in {dataset_name} dict: {list(label_dict.keys())[:3]}")
+
+                matched_count = 0
+                
+                for index, (img_path, source) in enumerate(zip(self.image_paths, self.sources)):
+                    if source == dataset_name:
+                        filename_stem = Path(img_path).stem 
+                        
+                        if filename_stem in label_dict:
+                            self.labels[index] = int(label_dict[filename_stem])
+                            matched_count += 1
+                        else:
+                            if matched_count == 0: 
+                                print(f"Mismatch: File '{filename_stem}' not in CSV dict")
+
+                print(f"Successfully matched {matched_count} images from {dataset_name}.")
+                
+                if matched_count == 0:
+                    print(f"⚠ CRITICAL: No images matched for {dataset_name}. Check filename parsing.")
 
             return csv_paths_dict
 
 
 
     def __getitem__(self, index) -> Tuple[torch.Tensor, int, str]:
-        img_path = self.image_paths[index]
-        label = self.labels[index]
-        source = self.sources[index]
+            img_path = self.image_paths[index]
+            label = self.labels[index] # can be int (0-4) OR string ("IDRiD_001") depending on match
+            source = self.sources[index]
 
-        # loading the image 
-        image = Image.open(img_path).convert("RGB")
-        # applying transformations to images and labels
-        if self.img_transform is None:
-            print("Image transform -> None")
-        
-        if self.label_transform is None:
-            print("Label transform -> None")
-        
-        image_trans = self.img_transform(image)
-        label_trans = self.label_transform(label)
-        return image_trans, label_trans, source
+            # loading the image 
+            image = Image.open(img_path).convert("RGB")
+            if self.img_transform is not None:
+                image = self.img_transform(image)
+
+            if isinstance(label, str):
+                label = 0 
+                
+            return image, int(label), source
     
     def get_dataset_statistics(self) -> Dict:
         count_sources = Counter(self.sources)
