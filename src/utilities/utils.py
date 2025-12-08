@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import torch
+from transformers import Conv1D
 from tqdm import tqdm
 
 def identity_transform(x):
@@ -15,7 +16,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch):
 
     for batch_idx, (images, labels, sources) in enumerate(progress_bar):
         images = images.to(device)
-        labels = labels[1].to(device)
+        labels = labels.to(device)
 
         # feed forward pass
         optimizer.zero_grad()
@@ -101,3 +102,18 @@ def show_images(dataset, train_labels, num_images, start_idx=0):
     
     plt.tight_layout()
     plt.show()
+
+
+def get_specific_layer_names(model):
+    # Create a list to store the layer names
+    layer_names = []
+    
+    # Recursively visit all modules and submodules
+    for name, module in model.named_modules():
+        # Check if the module is an instance of the specified layers
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding, torch.nn.Conv2d, Conv1D)):
+            # model name parsing 
+
+            layer_names.append('.'.join(name.split('.')[4:]).split('.')[0])
+    
+    return layer_names

@@ -1,3 +1,7 @@
 datasets/
 .vscode/
 src/models
+src/data_processing/__pycache__/
+src/main/yolov5su.pt
+src/hparams/__pycache__
+src/utilities/__pycache__

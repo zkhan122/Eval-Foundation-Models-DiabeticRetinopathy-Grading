@@ -15,7 +15,7 @@ class CombinedDRDataSet(Dataset):
 
     def __init__(self, 
             root_directories: Dict[str, str],
-            split: str="train", 
+            split: str, 
             img_transform: Optional[transforms.Compose] = None,
             label_transform: Optional[transforms.Compose] = None):
         
@@ -28,12 +28,16 @@ class CombinedDRDataSet(Dataset):
         # to track which dataset each image comes from
         self.sources = []
 
-        if "MFIDDR" in self.root_directories:
-            self.load_MFIDDR()
         if "IDRID" in self.root_directories:
             self.load_IDRID()
         if "DEEPDRID" in self.root_directories:
             self.load_DEEPDRID()
+
+        if "MESSIDOR" in self.root_directories:
+            self.load_MESSIDOR()
+
+        if "MFIDDR" in self.root_directories:
+            self.load_MFIDDR()
 
     def __len__(self) -> int:
         return len(self.image_paths)
@@ -44,10 +48,14 @@ class CombinedDRDataSet(Dataset):
         print(f"\nMFIDDR_ROOT: {MFIDDR_ROOT}")
         print(f"MFIDDR_ROOT exists: {MFIDDR_ROOT.exists()}")
 
+        # no split for val since not enough samples in this dataset
         if self.split == "train":
-            image_dir = MFIDDR_ROOT / 'sample' / 'train-examples'
-        else:
-            image_dir = MFIDDR_ROOT / 'sample' / 'test-examples'
+            image_dir = MFIDDR_ROOT / "sample" / "train-examples"
+        elif self.split == "test":    
+            image_dir = MFIDDR_ROOT / "sample" / "test-examples"
+        else: 
+            raise ValueError(f"Invalid argument for split identified in {MFIDDR_ROOT}") 
+
 
         if not image_dir.exists():
             print(f"ERROR: MFIDDR path not found at {image_dir}")
@@ -71,9 +79,16 @@ class CombinedDRDataSet(Dataset):
         print(f"IDRID exists: {IDRID_root.exists()}")
 
         if self.split == "train":
-            image_dir = base_path / 'Training_Set'
+            image_dir = base_path / "Training_Set"
+        
+        elif self.split == "val":
+            image_dir = base_path / "Validation_Set"
+
+        elif self.split == "test":
+            image_dir = base_path / "Testing_Set"
+
         else:
-            image_dir = base_path / 'Testing_Set'
+            raise ValueError(f"Invalid argument for split identified in {IDRID_root}") 
 
         if not image_dir.exists():
             print(f"Warning: IDRID {self.split} directory could not be found")
@@ -93,21 +108,25 @@ class CombinedDRDataSet(Dataset):
         print(f"DEEPDRID_root exists: {DEEPDRID_root.exists()}")
         
         if self.split == "train":
-            base_dir = DEEPDRID_root / "regular_fundus_images" / "regular-fundus-training" / "Images"
+            image_dir = DEEPDRID_root / "regular_fundus_images" / "regular-fundus-training" / "Images"
+        elif self.split == "val":
+            image_dir = DEEPDRID_root / "regular_fundus_images" / "regular-fundus-validation" / "Images"
+        elif self.split == "test":
+            image_dir = DEEPDRID_root / "regular_fundus_images" / "Online-Challenge1&2-Evaluation" /  "Images"
         else:
-            base_dir = DEEPDRID_root / "regular_fundus_images" / "Online-Challenge1&2-Evaluation"
+            raise ValueError(f"Invalid argument for split identified in {DEEPDRID_root}")
+
+        print(f"Looking for images in: {image_dir}")
+        print(f"Directory exists: {image_dir.exists()}")
         
-        print(f"Looking for images in: {base_dir}")
-        print(f"Directory exists: {base_dir.exists()}")
-        
-        if not base_dir.exists():
-            print(f"ERROR: DEEPDRID path not found at {base_dir}")
+        if not image_dir.exists():
+            print(f"ERROR: DEEPDRID path not found at {image_dir}")
             return
         
         loaded_count = 0
         # Iterate through numbered subdirectories (1, 2, 3, ...)
-        for subdir in os.listdir(base_dir):
-            subdir_path = base_dir / subdir
+        for subdir in os.listdir(image_dir):
+            subdir_path = image_dir / subdir
             
             # each image is inside a nested folder
             if not subdir_path.is_dir():
@@ -125,6 +144,38 @@ class CombinedDRDataSet(Dataset):
                     self.sources.append("DEEPDRID")
                     loaded_count += 1
 
+    def load_MESSIDOR(self):
+        MESSIDOR_ROOT = Path(self.root_directories["MESSIDOR"])
+
+        print(f"\nMESSIDOR_ROOT: {MESSIDOR_ROOT}")
+        print(f"MESSIDOR_ROOT exists: {MESSIDOR_ROOT.exists()}")
+
+
+        image_dir = None
+        if self.split == "train":
+            image_dir = MESSIDOR_ROOT / "messidor-2" / "messidor-2" / "preprocess"
+        elif self.split == "val":
+            image_dir = MESSIDOR_ROOT / "messidor-2" / "messidor-2" / "validation"
+        elif self.split == "test":
+            image_dir = MESSIDOR_ROOT / "messidor-2" / "messidor-2" / "test"
+        else:
+            raise ValueError(f"Invalid argument for split identified in {MESSIDOR_ROOT}")
+
+        
+        if not image_dir.exists():
+            print(f"Error: MESSIDOR path not found at {image_dir}")
+
+        # collecting the images
+
+        for image_file_path in os.listdir(image_dir):
+            filename, file_extension = os.path.splitext(image_file_path)
+            file_extension = file_extension.lstrip('.').lower()
+            if file_extension in valid_file_extensions:
+                self.image_paths.append(str(image_dir / image_file_path)) 
+                self.labels.append(filename)
+                self.sources.append("MESSIDOR")
+
+
     def extract_label_deepdr(self, filename: str):
         return 0
 
@@ -132,6 +183,9 @@ class CombinedDRDataSet(Dataset):
         return 0
     
     def extract_label_idrid(self, filename: str):
+        return 0
+    
+    def extract_label_messidor(self, filename:str):
         return 0
     
 
@@ -155,7 +209,11 @@ class CombinedDRDataSet(Dataset):
                 
                 elif dataset_name == "DEEPDRID":
                     label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["image_id"], labels_df["patient_DR_Level"])}
-                
+
+                elif dataset_name == "MESSIDOR":
+                    label_dict = {str(k).strip().lower(): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])
+    }
+
                 elif dataset_name == "MFIDDR":
                     print("Building MFIDDR dictionary from columns id1-id4...")
                     for _, row in labels_df.iterrows():
@@ -174,20 +232,35 @@ class CombinedDRDataSet(Dataset):
                 matched_count = 0
                 
                 for index, (img_path, source) in enumerate(zip(self.image_paths, self.sources)):
-                    if source == dataset_name:
-                        filename_stem = Path(img_path).stem 
-                        
-                        if filename_stem in label_dict:
-                            self.labels[index] = int(label_dict[filename_stem])
-                            matched_count += 1
-                        else:
-                            if matched_count == 0: 
-                                print(f"Mismatch: File '{filename_stem}' not in CSV dict")
+                    
+                    if source != dataset_name:
+                        continue
+                    
+                    # Default: Use stem and original case (works for IDRID/DEEPDRID)
+                    filename_for_lookup = Path(img_path).stem 
+
+                    # CONDITION: Apply specific logic only for MESSIDOR
+                    if source == "MESSIDOR":
+                        # For MESSIDOR, we need the full name and lowercase matching the dictionary keys
+                        filename_for_lookup = Path(img_path).name.strip().lower()
+                    
+                    # CONDITION: Apply specific logic for MFIDDR if its CSV contains stems
+                    elif source == "MFIDDR":
+                        # MFIDDR uses stem and we must convert it to lowercase to match the dict
+                        filename_for_lookup = Path(img_path).stem.strip().lower()
+
+                    # --- Lookup ---
+                    if filename_for_lookup in label_dict:
+                        self.labels[index] = int(label_dict[filename_for_lookup])
+                        matched_count += 1
+                    else:
+                        if matched_count == 0: 
+                            print(f"Mismatch Debug: File '{filename_for_lookup}' not in {dataset_name} CSV dict.")
 
                 print(f"Successfully matched {matched_count} images from {dataset_name}.")
                 
                 if matched_count == 0:
-                    print(f"⚠ CRITICAL: No images matched for {dataset_name}. Check filename parsing.")
+                    print(f"Error: No images matched for {dataset_name}. Check filename parsing.")
 
             return csv_paths_dict
 

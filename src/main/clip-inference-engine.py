@@ -11,10 +11,11 @@ from sklearn.model_selection import train_test_split
 from torchvision import transforms
 from torch.utils.data import DataLoader
 from data_processing.dataset import CombinedDRDataSet
-from utilities.utils import identity_transform, show_images, train_one_epoch, validate
+from utilities.utils import identity_transform, show_images, train_one_epoch, validate, get_specific_layer_names
 from hparams.hparams import NUM_CLASSES,BATCH_SIZE, NUM_EPOCHS, LEARNING_RATE, NUM_WORKERS, DEVICE
 from torch import nn
 from torch import optim
+from transformers import CLIPVisionModelWithProjection, CLIPProcessor
 
 # sys.path already adjusted above
 
@@ -197,49 +198,34 @@ if __name__ == "__main__":
 
 
     print("\n" + "="*50)
-    print("Initializing RETFound Model")
+    print("Initializing CLIP Model")
     print("="*50)
 
-    model = models_vit.__dict__["vit_large_patch16"](
-        num_classes=NUM_CLASSES,
-        drop_path_rate=0.2,
-        global_pool=True
-    )
+    model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14")
+    processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
 
-    checkpoint_path = f"{SRC_PATH}/models/RETFound_MAE/weights/RETFound_cfp_weights.pth"
-    print(f"Loading pretrained weights from: {checkpoint_path}")
+    print(model)
+    print(processor)
 
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    checkpoint_model = checkpoint["model"]
-    state_dict = model.state_dict()
 
-    # removing head weights (as they dont match number of classes for severity grading 0-4)
-    for k in ["head.weight", "head.bias"]:
-        if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
-            print(f"Removing key {k} from pretrained checkpoint (shape mismatch)")
-            del checkpoint_model[k]
+    print("CLIP model loaded successfully")
 
-    pos_embed.interpolate_pos_embed(model, checkpoint_model)
+    num_classes = 5
+    embedding_dim = model.config.projection_dim  # 768 for CLIP ViT-Large
+    model.classifier = nn.Linear(embedding_dim, num_classes)
 
-    # Loading the weights
-    msg = model.load_state_dict(checkpoint_model, strict=False)
-    print(f"Missing keys: {msg.missing_keys}")
-    print(f"Unexpected keys: {msg.unexpected_keys}")
+    print(f"Added classification head: {embedding_dim} -> {num_classes} classes")
 
-    # verifying we're only missing the classification head
-    assert set(msg.missing_keys) == {"head.weight", "head.bias", "fc_norm.weight", "fc_norm.bias"}
-
-    # initializing the new classification head
-    trunc_normal_(model.head.weight, std=2e-5)
-
+    print("LAYER NAMES:", list(set(get_specific_layer_names(model))))
+    print()
     print("\nWrapping model with LoRA adapters...")
     peft_config = LoraConfig(
         r=16,                  # rank
         lora_alpha=16,
-        target_modules=["qkv"], # target attention layers in ViT
+        target_modules=["q_proj", "v_proj", "k_proj"], # target attention layers in ViT
         lora_dropout=0.1,
         bias="none",
-        modules_to_save=["head", "fc_norm"] # keeping classification head and norm trainable
+        modules_to_save=["classifier"]
     )
 
     model = get_peft_model(model, peft_config)
@@ -258,45 +244,45 @@ if __name__ == "__main__":
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
 
     
-    # ============ Training Loop ============
-    print("\n" + "="*50)
-    print("Starting Training")
-    print("="*50)
+    # # ============ Training Loop ============
+    # print("\n" + "="*50)
+    # print("Starting Training")
+    # print("="*50)
 
-    best_val_acc = 0.0
+    # best_val_acc = 0.0
 
-    for epoch in range(NUM_EPOCHS):
-        print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
-        print("-" * 50)
+    # for epoch in range(NUM_EPOCHS):
+    #     print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
+    #     print("-" * 50)
 
-        train_loss, train_acc = train_one_epoch(
-            model, train_loader, criterion, optimizer, DEVICE, epoch
-        )
+    #     train_loss, train_acc = train_one_epoch(
+    #         model, train_loader, criterion, optimizer, DEVICE, epoch
+    #     )
 
-        # Validate
-        # val_loss, val_acc = validate(model, test_loader, criterion)
+    #     # Validate
+    #     # val_loss, val_acc = validate(model, test_loader, criterion)
 
-        # lr update
-        scheduler.step()
+    #     # lr update
+    #     scheduler.step()
 
-        print(f"\nEpoch {epoch+1} Summary:")
-        print(f"  Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
-        # print(f"  Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}% ")
-        print(f"  Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
+    #     print(f"\nEpoch {epoch+1} Summary:")
+    #     print(f"  Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
+    #     # print(f"  Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}% ")
+    #     print(f"  Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
 
-        # Saving best model
-        # if val_acc > best_val_acc:
-        #     best_val_acc = val_acc
-        #     print(f"  ✓ New best validation accuracy: {val_acc:.2f}%")
-        #     torch.save({
-        #         'epoch': epoch,
-        #         'model_state_dict': model.state_dict(),
-        #         'optimizer_state_dict': optimizer.state_dict(),
-        #         'val_acc': val_acc,
-        #         'val_loss': val_loss,
-        #     }, 'best_retfound_model.pth')
+    #     # Saving best model
+    #     # if val_acc > best_val_acc:
+    #     #     best_val_acc = val_acc
+    #     #     print(f"  ✓ New best validation accuracy: {val_acc:.2f}%")
+    #     #     torch.save({
+    #     #         'epoch': epoch,
+    #     #         'model_state_dict': model.state_dict(),
+    #     #         'optimizer_state_dict': optimizer.state_dict(),
+    #     #         'val_acc': val_acc,
+    #     #         'val_loss': val_loss,
+    #     #     }, 'best_retfound_model.pth')
 
-    print("\n" + "="*50)
-    print("Training Complete!")
-    print("="*50)
-    print(f"Best Validation Accuracy: {best_val_acc:.2f}%")
+    # print("\n" + "="*50)
+    # print("Training Complete!")
+    # print("="*50)
+    # print(f"Best Validation Accuracy: {best_val_acc:.2f}%")
