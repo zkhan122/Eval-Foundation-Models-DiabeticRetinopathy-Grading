@@ -11,10 +11,11 @@ from sklearn.model_selection import train_test_split
 from torchvision import transforms
 from torch.utils.data import DataLoader
 from data_processing.dataset import CombinedDRDataSet
-from utilities.utils import identity_transform, show_images, train_one_epoch, validate
+from utilities.utils import identity_transform, show_images, train_one_epoch_retfound, validate_retfound
 from hparams.hparams import NUM_CLASSES,BATCH_SIZE, NUM_EPOCHS, LEARNING_RATE, NUM_WORKERS, DEVICE
 from torch import nn
 from torch import optim
+from peft import get_peft_model, LoraConfig, TaskType
 
 # sys.path already adjusted above
 
@@ -25,8 +26,9 @@ if __name__ == "__main__":
 
     # loading the data 
 
-    DATA_DIR = "D:/Zayaan/D_git/Eval-Foundation-Models-DiabeticRetinopathy-Grading/datasets"
-
+    DATA_DIR = "../../datasets"
+    SRC_DIR = "../"
+    
     train_root_directories = {
         "DEEPDRID": f"{DATA_DIR}/DeepDRiD",
         "IDRID": f"{DATA_DIR}/IDRID",
@@ -51,7 +53,7 @@ if __name__ == "__main__":
     # test_labels_df = load_idrid_grading_labels("test", f"{BASE_PATH}/IDRiD_Disease_Grading_Testing_Labels.csv")
 
     train_transformations = transforms.Compose([
-        transforms.Resize((192, 192)),
+        transforms.Resize((224, 224)),
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(10),
         transforms.ToTensor(),
@@ -60,14 +62,14 @@ if __name__ == "__main__":
     ])
 
     validation_transformations = transforms.Compose([
-        transforms.Resize((192, 192)),
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                             std=[0.229, 0.224, 0.225])
     ])
 
     test_transformations = transforms.Compose([
-        transforms.Resize((192, 192)),
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                             std=[0.229, 0.224, 0.225])
@@ -184,7 +186,6 @@ if __name__ == "__main__":
 
     
     # ============ Initialize Model ============
-    from peft import get_peft_model, LoraConfig, TaskType
 
     # show_images(train_dataset, train_labels, num_images=60, start_idx=0)
 
@@ -206,7 +207,7 @@ if __name__ == "__main__":
         global_pool=True
     )
 
-    checkpoint_path = f"{SRC_PATH}/models/RETFound_MAE/weights/RETFound_cfp_weights.pth"
+    checkpoint_path = f"{SRC_DIR}/models/RETFound_MAE/weights/RETFound_cfp_weights.pth"
     print(f"Loading pretrained weights from: {checkpoint_path}")
 
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -269,12 +270,12 @@ if __name__ == "__main__":
         print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
         print("-" * 50)
 
-        train_loss, train_acc = train_one_epoch(
+        train_loss, train_acc = train_one_epoch_retfound(
             model, train_loader, criterion, optimizer, DEVICE, epoch
         )
 
         # Validate
-        # val_loss, val_acc = validate(model, test_loader, criterion)
+        val_loss, val_acc = validate_retfound(model, validation_loader, criterion, DEVICE)
 
         # lr update
         scheduler.step()
@@ -285,16 +286,16 @@ if __name__ == "__main__":
         print(f"  Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
 
         # Saving best model
-        # if val_acc > best_val_acc:
-        #     best_val_acc = val_acc
-        #     print(f"  ✓ New best validation accuracy: {val_acc:.2f}%")
-        #     torch.save({
-        #         'epoch': epoch,
-        #         'model_state_dict': model.state_dict(),
-        #         'optimizer_state_dict': optimizer.state_dict(),
-        #         'val_acc': val_acc,
-        #         'val_loss': val_loss,
-        #     }, 'best_retfound_model.pth')
+        if val_acc > best_val_acc:
+             best_val_acc = val_acc
+             print(f"  ✓ New best validation accuracy: {val_acc:.2f}%")
+             torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_acc': val_acc,
+                'val_loss': val_loss,
+            }, 'best_retfound_model.pth')
 
     print("\n" + "="*50)
     print("Training Complete!")

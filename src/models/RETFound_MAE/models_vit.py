@@ -46,6 +46,11 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
 
         return outcome
 
+    def forward(self, x):
+        x = self.forward_features(x)
+        if self.head is not None:
+            x = self.head(x)
+        return x
 
 def vit_large_patch16(**kwargs):
     model = VisionTransformer(

@@ -6,7 +6,48 @@ from tqdm import tqdm
 def identity_transform(x):
     return x
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch):
+def train_one_epoch_retfound(model, dataloader, criterion, optimizer, device, epoch):
+    model.train()
+    running_loss = 0 
+    correct = 0
+    total = 0
+
+    progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1} - Training")
+
+    for batch_idx, (images, labels, sources) in enumerate(progress_bar):
+        images = images.to(device)
+        labels = labels.to(device).long()
+
+        # feed forward pass
+        optimizer.zero_grad()
+        outputs = model(images)
+        loss = criterion(outputs, labels)
+
+        # backward pass
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item()
+        _, predicted = outputs.max(1)
+        total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
+
+        progress_bar.set_postfix({
+            "loss": running_loss / (batch_idx + 1),
+            "acc": 100 * correct / total
+        })
+
+
+        epoch_loss = running_loss / len(dataloader)
+        epoch_acc = 100 * correct / total
+
+    return epoch_loss, epoch_acc
+
+
+
+
+
+def train_one_epoch_clip(model, dataloader, criterion, optimizer, device, epoch):
     model.train()
     running_loss = 0.0
     correct = 0
@@ -16,11 +57,13 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch):
 
     for batch_idx, (images, labels, sources) in enumerate(progress_bar):
         images = images.to(device)
-        labels = labels.to(device)
+        labels = labels.to(device).long()
 
         # feed forward pass
         optimizer.zero_grad()
-        outputs = model(images)
+        outputs_obj = model(images)
+        image_features = outputs_obj.image_embeds
+        outputs = model.classifier(image_features)
         loss = criterion(outputs, labels)
 
         # backward pass
@@ -39,10 +82,44 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch):
 
         epoch_loss = running_loss / len(dataloader)
         epoch_acc = 100 * correct / total
-
-        return epoch_loss, epoch_acc
+        
+    return epoch_loss, epoch_acc
     
-def validate(model, dataloader, criterion, device):
+def validate_clip(model, dataloader, criterion, device):
+    """Validate the model"""
+    model.eval()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+    
+    with torch.no_grad():
+        pbar = tqdm(dataloader, desc='Validation')
+        for batch_idx, (images, labels, sources) in enumerate(pbar):
+            images = images.to(device)
+            labels = labels.to(device)
+            
+            outputs_obj = model(images)
+            image_features = outputs_obj.image_embeds
+            outputs = model.classifier(image_features)
+            loss = criterion(outputs, labels)
+            
+            running_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+            
+            pbar.set_postfix({
+                'loss': running_loss / (batch_idx + 1),
+                'acc': 100. * correct / total
+            })
+    
+    val_loss = running_loss / len(dataloader)
+    val_acc = 100. * correct / total
+    
+    return val_loss, val_acc
+
+
+def validate_retfound(model, dataloader, criterion, device):
     """Validate the model"""
     model.eval()
     running_loss = 0.0
@@ -72,6 +149,8 @@ def validate(model, dataloader, criterion, device):
     val_acc = 100. * correct / total
     
     return val_loss, val_acc
+
+
 
 def show_images(dataset, train_labels, num_images, start_idx=0):
     
