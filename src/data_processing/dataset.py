@@ -211,8 +211,7 @@ class CombinedDRDataSet(Dataset):
                     label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["image_id"], labels_df["patient_DR_Level"])}
 
                 elif dataset_name == "MESSIDOR":
-                    label_dict = {str(k).strip().lower(): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])
-    }
+                    label_dict = {str(k).strip().lower(): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])}
 
                 elif dataset_name == "MFIDDR":
                     print("Building MFIDDR dictionary from columns id1-id4...")
@@ -259,6 +258,81 @@ class CombinedDRDataSet(Dataset):
 
                 print(f"Successfully matched {matched_count} images from {dataset_name}.")
                 
+                if matched_count == 0:
+                    print(f"Error: No images matched for {dataset_name}. Check filename parsing.")
+
+            return csv_paths_dict
+
+
+    def load_labels_from_csv_for_test(self, csv_paths_dict: Dict[str, str]):
+            if len(self.labels) == 0:
+                self.labels = [None] * len(self.image_paths)
+
+            for dataset_name, csv_path in csv_paths_dict.items():
+                print(f"\n--- Processing {dataset_name} ---")
+                if not os.path.exists(csv_path):
+                    print(f"FileNotFoundError: CSV not found at {csv_path}")
+                    continue
+
+                labels_df = pd.read_csv(csv_path)
+                print(f"Loaded CSV: {len(labels_df)} rows")
+
+                label_dict = {}
+
+                if dataset_name == "IDRID":
+                    label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["Image name"], labels_df["Retinopathy grade"])}
+
+                elif dataset_name == "DEEPDRID":
+                    label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["image_id"], labels_df["DR_Levels"])}
+
+                elif dataset_name == "MESSIDOR":
+                    label_dict = {str(k).strip().lower(): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])}
+
+                elif dataset_name == "MFIDDR":
+                    print("Building MFIDDR dictionary from columns id1-id4...")
+                    for _, row in labels_df.iterrows():
+                        try:
+                            grade = int(row['level'])
+                            # Check columns id1, id2, id3, id4
+                            for col in ['id1', 'id2', 'id3', 'id4']:
+                                if col in row and pd.notna(row[col]):
+                                    image_name = str(row[col]).strip()
+                                    label_dict[image_name] = grade
+                        except ValueError:
+                            continue
+
+                print(f"DEBUG: First 3 keys in {dataset_name} dict: {list(label_dict.keys())[:3]}")
+
+                matched_count = 0
+
+                for index, (img_path, source) in enumerate(zip(self.image_paths, self.sources)):
+
+                    if source != dataset_name:
+                        continue
+
+                    # Default: Use stem and original case (works for IDRID/DEEPDRID)
+                    filename_for_lookup = Path(img_path).stem
+
+                    # CONDITION: Apply specific logic only for MESSIDOR
+                    if source == "MESSIDOR":
+                        # For MESSIDOR, we need the full name and lowercase matching the dictionary keys
+                        filename_for_lookup = Path(img_path).name.strip().lower()
+
+                    # CONDITION: Apply specific logic for MFIDDR if its CSV contains stems
+                    elif source == "MFIDDR":
+                        # MFIDDR uses stem and we must convert it to lowercase to match the dict
+                        filename_for_lookup = Path(img_path).stem.strip().lower()
+
+                    # --- Lookup ---
+                    if filename_for_lookup in label_dict:
+                        self.labels[index] = int(label_dict[filename_for_lookup])
+                        matched_count += 1
+                    else:
+                        if matched_count == 0:
+                            print(f"Mismatch Debug: File '{filename_for_lookup}' not in {dataset_name} CSV dict.")
+
+                print(f"Successfully matched {matched_count} images from {dataset_name}.")
+
                 if matched_count == 0:
                     print(f"Error: No images matched for {dataset_name}. Check filename parsing.")
 

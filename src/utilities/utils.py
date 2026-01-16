@@ -6,7 +6,7 @@ from transformers import Conv1D
 from tqdm import tqdm
 import numpy as np
 from torch.amp import autocast
-
+from sklearn.metrics import precision_score, recall_score, f1_score, cohen_kappa_score, classification_report
 
 def identity_transform(x):
     return x
@@ -19,6 +19,18 @@ def weighted_class_imbalance(dataset):
     class_weights = 1.0 / class_counts
     class_weights = class_weights / class_weights.sum() * len(class_weights)
     return torch.FloatTensor(class_weights)
+
+
+# calculating metrics
+def calculate_metrics(labels, predictions):
+    precision = precision_score(labels, predictions, average="macro", zero_division=0)
+    recall = recall_score(labels, predictions, average="macro", zero_division=0)
+    f1 = f1_score(labels, predictions, average="macro", zero_division=0)
+    quadratic_weighted_kappa = cohen_kappa_score(labels, predictions, weights="quadratic")
+
+    return precision, recall, f1, quadratic_weighted_kappa
+
+
 
 
 
@@ -189,7 +201,6 @@ def validate_clip(model, dataloader, criterion, device):
 
     return val_loss, val_acc
 
-
 def validate_retfound(model, dataloader, criterion, device):
     """Validate the model"""
     model.eval()
@@ -222,7 +233,64 @@ def validate_retfound(model, dataloader, criterion, device):
     return val_loss, val_acc
 
 
+def test_retfound(model, dataloader, criterion, device):
+    """Validate the model"""
+    model.eval()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    all_predictions = []
+    all_labels = []
+
+    with torch.no_grad():
+        pbar = tqdm(dataloader, desc='Test Run Progress')
+        for batch_idx, (images, labels, sources) in enumerate(pbar):
+            images = images.to(device)
+            labels = labels.to(device)
+
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+
+            running_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+
+            # storing predictions and labels to calculate metrics
+            all_predictions.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+            pbar.set_postfix({
+                'loss': running_loss / (batch_idx + 1),
+                'acc': 100. * correct / total
+            })
+
+    val_loss = running_loss / len(dataloader)
+    val_acc = 100. * correct / total
+
+    all_predictions = np.array(all_predictions)
+    all_labels = np.array(all_labels)
+
+    precision, recall, f1, quadratic_weighted_kappa = calculate_metrics(all_labels, all_predictions)
+    
+    metrics = {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "quadratic_weighted_kappa": quadratic_weighted_kappa
+    }
+
+    return val_loss, val_acc, precision, recall, f1, quadratic_weighted_kappa
+
+
+
+
 def validate_urfound(model, dataloader, criterion, device):
+    (alll_labels)
+
+    # calculating metrics
+
     """Validate the model"""
     model.eval()
     running_loss = 0.0
