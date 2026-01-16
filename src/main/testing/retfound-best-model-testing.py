@@ -1,5 +1,6 @@
 import sys
 import os 
+import json
 import torch
 import optuna
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -49,10 +50,11 @@ test_csv_paths = {
 test_dataset.load_labels_from_csv_for_test(test_csv_paths)
 
 
-
-model = models_vit.__dict__["vit_large_patch16"](num_classes=NUM_CLASSES, drop_path_rate=0.2, global_pool=True)
+# note to self: THIS IS THE MODEL (during testing phase we only load weights)
 checkpoint_path = f"{SRC_DIR}/best_models/best_retfound_model.pth"
 checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+
 
 print("Checkpoint keys:", checkpoint.keys())
 print("\nCheckpoint structure:")
@@ -61,21 +63,48 @@ for key in checkpoint.keys():
     if isinstance(checkpoint[key], dict):
         print(f"    Subkeys: {list(checkpoint[key].keys())[:5]}...")  
 
-checkpoint_model = checkpoint["model_state_dict"]
-state_dict = model.state_dict()
+
+params = checkpoint['params']
+batch_size = params['batch_size']
+lr = params['lr']
+weight_decay = params['weight_decay']
+lora_r = params['lora_r'] 
+lora_alpha = params['lora_alpha']
+lora_dropout = params['lora_dropout']
 
 
-for k in ["head.weight", "head.bias"]:
-    if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
-        del checkpoint_model[k]
-
-pos_embed.interpolate_pos_embed(model, checkpoint_model)
-model.load_state_dict(checkpoint_model, strict=False)
-model.eval()
-trunc_normal_(model.head.weight, std=2e-5)
+print(f"\nUsing parameters from training:")
+print(f"  Batch size: {batch_size}")
+print(f"  Learning rate: {lr}")
+print(f"  LoRA r: {lora_r}")
+print(f"  LoRA alpha: {lora_alpha}")
 
 
+
+model = models_vit.__dict__["vit_large_patch16"](
+    num_classes=NUM_CLASSES,
+    drop_path_rate=0.2,
+    global_pool=True
+)
+
+peft_config = LoraConfig(
+    r=lora_r,
+    lora_alpha=lora_alpha,
+    target_modules=["qkv", "proj"],
+    lora_dropout=lora_dropout,
+    bias="none",
+    modules_to_save=["head"]
+)
+
+
+
+model = get_peft_model(model, peft_config)
 model = model.to(DEVICE)
+
+model.load_state_dict(checkpoint["model_state_dict"])
+model.eval()
+
+
 
 # param count
 total_params = sum(p.numel() for p in model.parameters())
@@ -84,36 +113,46 @@ print(f"\nTotal parameters: {total_params:,}")
 print(f"Trainable parameters: {trainable_params:,}")
 
 
-
-# SETTING STATIC paramas and LOADING params from the state_dict
-learning_rate = checkpoint["params"]["lr"]
-weight_decay = checkpoint["params"]["weight_decay"]
-batch_size = checkpoint["params"]["batch_size"]
-NUM_EPOCHS = 50
+class_weights = weighted_class_imbalance(test_dataset).to(DEVICE)
+criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
 
 
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
 
-class_weights = weighted_class_imbalance(test_dataset).to(DEVICE)
-criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
-optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
 
-scaler = GradScaler()
+test_loss, test_acc, precision, recall, f1, quadratic_weighted_kappa = test_retfound(
+    model, test_loader, criterion, DEVICE
+)
 
-best_acc = 0.0
-best_loss = float("inf")
-for epoch in range(NUM_EPOCHS):
-    test_loss, test_acc, precision, recall, f1,  quadratic_weighted_kappa  = test_retfound(model, test_loader, criterion, DEVICE)
-    scheduler.step()    
+print(f"\nFINAL TEST RESULTS:")
+print(f"Test Accuracy: {test_acc:.2f}%")
+print(f"Test Loss: {test_loss:.4f}")
+print(f"Precision: {precision:.4f}")
+print(f"Recall: {recall:.4f}")
+print(f"F1 Score: {f1:.4f}")
+print(f"Quadratic Weighted Kappa: {quadratic_weighted_kappa:.4f}")
 
-    if test_acc > best_acc:
-        best_acc = test_acc
-    
-    if test_loss < best_loss:
-        best_loss = test_loss
-    
-    print(f"METRICS = current_acc: {test_acc}, current_loss: {test_loss}, precision: {precision}, recall: {recall}, f1: {f1}, quadratic_weighted_kappa: {quadratic_weighted_kappa}")
-    
-    print(f"best_acc: {best_acc}, best_loss: {best_loss}")
+print(f"\nCOMPARISON WITH TRAINING:")
+print(f"Validation accuracy during training: {checkpoint['val_acc']:.2f}%")
+print(f"Test accuracy on unseen data: {test_acc:.2f}%")
+print(f"Difference: {test_acc - checkpoint['val_acc']:+.2f}%")
 
+
+results = {
+    "test_accuracy": float(test_acc),
+    "test_loss": float(test_loss),
+    "precision": float(precision),
+    "recall": float(recall),
+    "f1_score": float(f1),
+    "quadratic_weighted_kappa": float(quadratic_weighted_kappa),
+    "training_validation_accuracy": float(checkpoint['val_acc']),
+    "hyperparameters": params,
+    "trial_number": int(checkpoint['trial_number'])
+}
+
+results_path = "retfound_test_results.json"
+with open(results_path, "w") as f:
+    json.dump(results, f, indent=4)
+
+print(f"\nResults saved to: {results_path}")
+print("="*70)
