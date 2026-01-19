@@ -1,8 +1,11 @@
 import sys
 import os 
 import torch
+import optuna
 # ensure parent path added so imports work when running as script
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from models.RETFound_MAE import models_vit
+from models.RETFound_MAE.util import pos_embed
 from timm.models.layers import trunc_normal_
 import torchvision
 from sklearn.model_selection import train_test_split
@@ -13,14 +16,24 @@ from utilities.utils import identity_transform, show_images, train_one_epoch_cli
 from hparams.hparams import NUM_CLASSES,BATCH_SIZE, NUM_EPOCHS, LEARNING_RATE, NUM_WORKERS, DEVICE
 from torch import nn
 from torch import optim
+from torch.amp import GradScaler
 from transformers import CLIPVisionModelWithProjection, CLIPProcessor
 from peft import get_peft_model, LoraConfig, TaskType
 # sys.path already adjusted above
 
-if __name__ == "__main__":
+def objective(trial):
+    print(f"\n{'='*50}")
+    print(f"Starting Trial {trial.number + 1}")
+    print(f"{'='*50}")
+
+    lr = trial.suggest_float("lr", LEARNING_RATE[0], LEARNING_RATE[1], log=True) if isinstance(LEARNING_RATE, (list, tuple)) else trial.suggest_float("lr", 1e-6, 1e-3, log=True)
+    batch_size = trial.suggest_categorical("batch_size", BATCH_SIZE) if isinstance(BATCH_SIZE, (list, tuple)) else trial.suggest_categorical("batch_size", [BATCH_SIZE])
+    weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-1, log=True)
+    lora_r = trial.suggest_categorical("lora_r", [4, 8, 16, 32])
+    lora_alpha = trial.suggest_categorical("lora_alpha", [8, 16, 32, 64])
+    lora_dropout = trial.suggest_float("lora_dropout", 0.0, 0.3)
 
     print(f"Using device: {DEVICE}")
-
 
     # loading the data 
 
@@ -132,7 +145,7 @@ if __name__ == "__main__":
     # --- FIX: Set num_workers=0 to prevent freezing on Drive ---
     train_loader = DataLoader(
         train_dataset,
-        batch_size=4,
+        batch_size=batch_size,
         shuffle=True,
         num_workers=0
     )
@@ -142,7 +155,7 @@ if __name__ == "__main__":
 
     validation_loader = DataLoader(
         validation_dataset,
-        batch_size=4,
+        batch_size=batch_size,
         shuffle=True,
         num_workers=0
     )
@@ -217,10 +230,10 @@ if __name__ == "__main__":
     print()
     print("\nWrapping model with LoRA adapters...")
     peft_config = LoraConfig(
-        r=16,                  # rank
-        lora_alpha=16,
+        r=lora_r,                  # rank
+        lora_alpha=lora_alpha,
         target_modules=["q_proj", "v_proj", "k_proj"], # target attention layers in ViT
-        lora_dropout=0.1,
+        lora_dropout=lora_dropout,
         bias="none",
         modules_to_save=["classifier"]
     )
@@ -237,23 +250,24 @@ if __name__ == "__main__":
     print(f"Trainable parameters: {trainable_params:,}")
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.05)
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
-
+    
+    scaler = GradScaler()
     
     # # ============ Training Loop ============
     print("\n" + "="*50)
     print("Starting Training")
     print("="*50)
 
-    best_val_acc = 0.0
+    best_trial_acc = 0.0
 
     for epoch in range(NUM_EPOCHS):
         print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
         print("-" * 50)
 
-        train_loss, train_acc = train_one_epoch_clip(
-            model, train_loader, criterion, optimizer, DEVICE, epoch
+        train_one_epoch_clip(
+            model, train_loader, criterion, optimizer, DEVICE, epoch, scaler
         )
 
     #   Validate
@@ -263,23 +277,31 @@ if __name__ == "__main__":
         scheduler.step()
 
         print(f"\nEpoch {epoch+1} Summary:")
-        print(f"  Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
         print(f"  Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}% ")
-        print(f"  Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
 
     #     # Saving best model
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+        if val_acc > best_trial_acc:
+            best_trial_acc = val_acc
             print(f"  ✓ New best validation accuracy: {val_acc:.2f}%")
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_acc': val_acc,
-                'val_loss': val_loss,
-            }, 'best_clip_model.pth')
+            trial.set_user_attr("best_model_state", model.state_dict())
 
-    print("\n" + "="*50)
-    print("Training Complete!")
-    print("="*50)
-    print(f"Best Validation Accuracy: {best_val_acc:.2f}%")
+    return best_trial_acc
+
+def save_best_model_callback(study, trial):
+    if study.best_trial.number == trial.number:
+        os.makedirs("../best_models", exist_ok=True)
+        torch.save({
+            'trial_number': trial.number,
+            'params': trial.params,
+            'val_acc': trial.value,
+            'model_state_dict': trial.user_attrs["best_model_state"],
+        }, '../best_models/best_clip_model.pth')
+
+if __name__ == "__main__":
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=3, callbacks=[save_best_model_callback])
+
+    print(f"Best Accuracy: {study.best_trial.value}")
+    print(f"Best Params: {study.best_trial.params}")
+

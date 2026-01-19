@@ -1,0 +1,18 @@
+{
+    "test_accuracy": 64.51612903225806,
+    "test_loss": 1.7030618333154255,
+    "precision": 0.5570354963050063,
+    "recall": 0.5958856918500434,
+    "f1_score": 0.57055378958352,
+    "quadratic_weighted_kappa": 0.780422981335064,
+    "training_validation_accuracy": 72.24137931034483,
+    "hyperparameters": {
+        "lr": 0.000608118799690535,
+        "batch_size": 4,
+        "weight_decay": 0.001,
+        "lora_r": 6,
+        "lora_alpha": 8,
+        "lora_dropout": 0.2
+    },
+    "trial_number": 0
+}

@@ -201,6 +201,59 @@ def validate_clip(model, dataloader, criterion, device):
 
     return val_loss, val_acc
 
+
+def test_clip(model, dataloader, criterion, device):
+    """Validate the model"""
+    model.eval()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    all_predictions = []
+    all_labels = []
+
+    with torch.no_grad():
+        pbar = tqdm(dataloader, desc='Validation')
+        for batch_idx, (images, labels, sources) in enumerate(pbar):
+            images = images.to(device)
+            labels = labels.to(device)
+
+            outputs_obj = model(images)
+            image_features = outputs_obj.image_embeds
+            outputs = model.classifier(image_features)
+            loss = criterion(outputs, labels)
+
+            running_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+
+            all_predictions.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+            pbar.set_postfix({
+                'loss': running_loss / (batch_idx + 1),
+                'acc': 100. * correct / total
+            })
+
+    val_loss = running_loss / len(dataloader)
+    val_acc = 100. * correct / total
+
+    all_predictions = np.array(all_predictions)
+    all_labels = np.array(all_labels)
+
+    precision, recall, f1, quadratic_weighted_kappa = calculate_metrics(all_labels, all_predictions)
+    
+    metrics = {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "quadratic_weighted_kappa": quadratic_weighted_kappa
+    }
+
+    return val_loss, val_acc, precision, recall, f1, quadratic_weighted_kappa
+
+
 def validate_retfound(model, dataloader, criterion, device):
     """Validate the model"""
     model.eval()
@@ -287,7 +340,6 @@ def test_retfound(model, dataloader, criterion, device):
 
 
 def validate_urfound(model, dataloader, criterion, device):
-    (alll_labels)
 
     # calculating metrics
 
@@ -320,6 +372,61 @@ def validate_urfound(model, dataloader, criterion, device):
     val_acc = 100. * correct / total
 
     return val_loss, val_acc
+
+
+def test_urfound(model, dataloader, criterion, device):
+
+    # calculating metrics
+
+    """Validate the model"""
+    model.eval()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    all_predictions = []
+    all_labels = []
+
+    with torch.no_grad():
+        pbar = tqdm(dataloader, desc='Validation')
+        for batch_idx, (images, labels, sources) in enumerate(pbar):
+            images = images.to(device)
+            labels = labels.to(device)
+
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+
+            running_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+
+
+            all_predictions.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+            pbar.set_postfix({
+                'loss': running_loss / (batch_idx + 1),
+                'acc': 100. * correct / total
+            })
+
+    val_loss = running_loss / len(dataloader)
+    val_acc = 100. * correct / total
+
+    all_predictions = np.array(all_predictions)
+    all_labels = np.array(all_labels)
+
+    precision, recall, f1, quadratic_weighted_kappa = calculate_metrics(all_labels, all_predictions)
+    
+    metrics = {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "quadratic_weighted_kappa": quadratic_weighted_kappa
+    }
+
+    return val_loss, val_acc, precision, recall, f1, quadratic_weighted_kappa
+
 
 
 def show_images(dataset, train_labels, num_images, start_idx=0):

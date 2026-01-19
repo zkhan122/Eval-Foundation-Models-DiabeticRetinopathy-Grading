@@ -4,15 +4,15 @@ import json
 import torch
 import optuna
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from models.RETFound_MAE import models_vit
-from models.RETFound_MAE.util import pos_embed
+from models.UrFound.finetune import models_vit
+from models.UrFound.util import pos_embed
 from timm.models.layers import trunc_normal_
 import torchvision
 from sklearn.model_selection import train_test_split
 from torchvision import transforms
 from torch.utils.data import DataLoader
 from data_processing.dataset import CombinedDRDataSet
-from utilities.utils import identity_transform, show_images, train_one_epoch_retfound, test_retfound, weighted_class_imbalance, calculate_metrics
+from utilities.utils import identity_transform, show_images, test_urfound, weighted_class_imbalance, calculate_metrics
 from hparams.hparams import NUM_CLASSES, BATCH_SIZE, NUM_EPOCHS, LEARNING_RATE, WEIGHT_DECAY, RANK_OPTIONS, ALPHA_OPTIONS, DROPOUT_OPTIONS, NUM_TRIALS, NUM_WORKERS, DEVICE
 from torch import nn
 from torch import optim
@@ -51,7 +51,7 @@ test_dataset.load_labels_from_csv_for_test(test_csv_paths)
 
 
 # note to self: THIS IS THE MODEL (during testing phase we only load weights)
-checkpoint_path = f"{SRC_DIR}/best_models/best_retfound_model.pth"
+checkpoint_path = f"{SRC_DIR}/best_models/best_urfound_model.pth"
 checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
 
@@ -81,7 +81,7 @@ print(f"  LoRA alpha: {lora_alpha}")
 
 
 
-model = models_vit.__dict__["vit_large_patch16"](
+model = models_vit.__dict__["vit_base_patch16"](
     num_classes=NUM_CLASSES,
     drop_path_rate=0.2,
     global_pool=True
@@ -120,7 +120,7 @@ criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
 
 
-test_loss, test_acc, precision, recall, f1, quadratic_weighted_kappa = test_retfound(
+test_loss, test_acc, precision, recall, f1, quadratic_weighted_kappa = test_urfound(
     model, test_loader, criterion, DEVICE
 )
 
@@ -150,7 +150,7 @@ results = {
     "trial_number": int(checkpoint['trial_number'])
 }
 
-results_path = "results/retfound_test_results.json"
+results_path = "results/urfound_test_results.json"
 with open(results_path, "w") as f:
     json.dump(results, f, indent=4)
 
