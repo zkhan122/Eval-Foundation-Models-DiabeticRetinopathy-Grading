@@ -6,7 +6,9 @@ from transformers import Conv1D
 from tqdm import tqdm
 import numpy as np
 from torch.amp import autocast
-from sklearn.metrics import precision_score, recall_score, f1_score, cohen_kappa_score, classification_report
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, cohen_kappa_score, classification_report
+import seaborn as sn
+from .plots import generate_confusion_matrix
 
 def identity_transform(x):
     return x
@@ -19,6 +21,7 @@ def weighted_class_imbalance(dataset):
     class_weights = 1.0 / class_counts
     class_weights = class_weights / class_weights.sum() * len(class_weights)
     return torch.FloatTensor(class_weights)
+
 
 
 # calculating metrics
@@ -251,6 +254,8 @@ def test_clip(model, dataloader, criterion, device):
             "quadratic_weighted_kappa": quadratic_weighted_kappa
     }
 
+    generate_confusion_matrix(all_labels, all_predictions, "results/clip", "clip_cf")
+
     return val_loss, val_acc, precision, recall, f1, quadratic_weighted_kappa
 
 
@@ -333,6 +338,9 @@ def test_retfound(model, dataloader, criterion, device):
             "f1": f1,
             "quadratic_weighted_kappa": quadratic_weighted_kappa
     }
+
+    
+    generate_confusion_matrix(all_labels, all_predictions, "results/retfound", "retfound_cf")
 
     return val_loss, val_acc, precision, recall, f1, quadratic_weighted_kappa
 
@@ -425,6 +433,9 @@ def test_urfound(model, dataloader, criterion, device):
             "quadratic_weighted_kappa": quadratic_weighted_kappa
     }
 
+
+    generate_confusion_matrix(all_labels, all_predictions, "results/urfound", "urfound_cf")
+
     return val_loss, val_acc, precision, recall, f1, quadratic_weighted_kappa
 
 
@@ -473,3 +484,4 @@ def get_specific_layer_names(model):
             layer_names.append('.'.join(name.split('.')[4:]).split('.')[0])
 
     return layer_names
+

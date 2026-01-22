@@ -154,7 +154,7 @@ results = {
     "trial_number": int(checkpoint['trial_number'])
 }
 
-results_path = "results/clip_test_results.json"
+results_path = "results/clip/clip_test_results.json"
 with open(results_path, "w") as f:
     json.dump(results, f, indent=4)
 
