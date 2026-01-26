@@ -6,7 +6,7 @@ from transformers import Conv1D
 from tqdm import tqdm
 import numpy as np
 from torch.amp import autocast
-from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, cohen_kappa_score, classification_report
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, cohen_kappa_score, balanced_accuracy_score, classification_report
 import seaborn as sn
 from .plots import generate_confusion_matrix
 
@@ -34,10 +34,78 @@ def calculate_metrics(labels, predictions):
     return precision, recall, f1, quadratic_weighted_kappa
 
 
+def train_one_epoch_retfound(
+    model,
+    dataloader,
+    criterion,
+    optimizer,
+    device,
+    epoch,
+    scaler=None,
+    grad_accum_steps: int = 1,
+    max_grad_norm: float | None = None,   # gradient clipping
+):
+    model.train()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    grad_accum_steps = max(1, int(grad_accum_steps))
+    optimizer.zero_grad(set_to_none=True)
+
+    progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1} - Training")
+
+    for batch_idx, (images, labels, sources) in enumerate(progress_bar):
+        images = images.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True).long()
+
+        # forward + loss
+        if scaler is not None:
+            with autocast(device_type="cuda"):
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+            # scale loss for accumulation
+            loss_to_backprop = loss / grad_accum_steps
+            scaler.scale(loss_to_backprop).backward()
+        else:
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            (loss / grad_accum_steps).backward()
+            
+        running_loss += loss.item()
+        _, predicted = outputs.max(1)
+        total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
+
+        do_step = ((batch_idx + 1) % grad_accum_steps == 0) or ((batch_idx + 1) == len(dataloader))
+        if do_step:
+            if max_grad_norm is not None:
+                # unscale before clipping when using AMP
+                if scaler is not None:
+                    scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+
+            if scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+
+            optimizer.zero_grad(set_to_none=True)
+
+        progress_bar.set_postfix({
+            "loss": running_loss / (batch_idx + 1),
+            "acc": 100.0 * correct / total,
+            "accum": grad_accum_steps
+        })
+
+    epoch_loss = running_loss / len(dataloader)
+    epoch_acc = 100.0 * correct / total
+    return epoch_loss, epoch_acc
 
 
 
-def train_one_epoch_retfound(model, dataloader, criterion, optimizer, device, epoch, scaler):
+def train_one_epoch_urfound(model, dataloader, criterion, optimizer, device, epoch, scaler):
     model.train()
     running_loss = 0
     correct = 0
@@ -46,12 +114,11 @@ def train_one_epoch_retfound(model, dataloader, criterion, optimizer, device, ep
     progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1} - Training")
 
     for batch_idx, (images, labels, sources) in enumerate(progress_bar):
-        images = images.to(device, non_blocking=True)
-        labels = labels.to(device, non_blocking=True).long()
+        images = images.to(device)
+        labels = labels.to(device).long()
 
         # feed forward pass
         optimizer.zero_grad()
-
 
         if scaler is not None:
             with autocast(device_type="cuda"):
@@ -65,8 +132,6 @@ def train_one_epoch_retfound(model, dataloader, criterion, optimizer, device, ep
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-
-
 
         running_loss += loss.item()
         _, predicted = outputs.max(1)
@@ -289,6 +354,40 @@ def validate_retfound(model, dataloader, criterion, device):
     val_acc = 100. * correct / total
 
     return val_loss, val_acc
+
+
+
+def validate_retfound_with_metrics(model, dataloader, criterion, device, num_classes: int):
+    model.eval()
+    total_loss = 0.0
+    y_true, y_pred = [], []
+
+    with torch.no_grad():
+        for images, labels, _ in dataloader:
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True).long()
+
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            total_loss += loss.item()
+
+            preds = outputs.argmax(dim=1)
+            y_true.extend(labels.detach().cpu().tolist())
+            y_pred.extend(preds.detach().cpu().tolist())
+
+    val_loss = total_loss / len(dataloader)
+    acc = 100.0 * (np.array(y_true) == np.array(y_pred)).mean()
+    bal_acc = 100.0 * balanced_accuracy_score(y_true, y_pred)
+    macro_f1 = 100.0 * f1_score(y_true, y_pred, average="macro")
+
+    report = classification_report(
+        y_true, y_pred,
+        labels=list(range(num_classes)),
+        digits=4,
+        zero_division=0
+    )
+
+    return val_loss, acc, bal_acc, macro_f1, report
 
 
 def test_retfound(model, dataloader, criterion, device):
