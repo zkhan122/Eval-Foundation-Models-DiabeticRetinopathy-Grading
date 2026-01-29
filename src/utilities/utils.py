@@ -1,4 +1,7 @@
 
+from pathlib import Path
+import json
+
 
 import matplotlib.pyplot as plt
 import torch
@@ -8,6 +11,7 @@ import numpy as np
 from torch.amp import autocast
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, cohen_kappa_score, balanced_accuracy_score, classification_report
 import seaborn as sn
+import pandas as pd
 from .plots import generate_confusion_matrix
 
 def identity_transform(x):
@@ -584,3 +588,11 @@ def get_specific_layer_names(model):
 
     return layer_names
 
+
+def json_to_csv(json_path, save_path, filename):
+    path = Path(json_path)
+    with path.open("r", encoding="utf-8") as file:
+        data = json.loads(file.read())
+
+    df = pd.json_normalize(data)
+    df.to_csv(f"{save_path}/{filename}.csv", index=False, encoding="utf-8")

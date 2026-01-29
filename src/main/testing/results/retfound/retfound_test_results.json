@@ -1,18 +1,32 @@
 {
-    "test_accuracy": 65.29477196885428,
-    "test_loss": 1.673494615952174,
-    "precision": 0.5709795826704248,
-    "recall": 0.5782654689724158,
-    "f1_score": 0.5703719487405511,
-    "quadratic_weighted_kappa": 0.793285647503692,
-    "training_validation_accuracy": 69.13793103448276,
+    "test_accuracy": 64.29365962180201,
+    "test_loss": 1.0457723860719563,
+    "precision": 0.5486587753140456,
+    "recall": 0.577888744732656,
+    "f1_score": 0.5553489827470873,
+    "quadratic_weighted_kappa": 0.7908162403335919,
+    "training_validation_accuracy": 67.41379310344827,
     "hyperparameters": {
-        "lr": 0.00017755915996554156,
-        "batch_size": 4,
-        "weight_decay": 0.01,
-        "lora_r": 2,
-        "lora_alpha": 32,
-        "lora_dropout": 0.0
+        "lora": {
+            "r": 8,
+            "alpha": 32,
+            "dropout": 0.05
+        },
+        "train": {
+            "epochs": 120,
+            "lr_max": 5e-05,
+            "lr_min": 5e-09,
+            "warmup_epochs": 10,
+            "cooldown_epochs": 20,
+            "weight_decay": 0.0005,
+            "betas": [
+                0.9,
+                0.99
+            ],
+            "micro_batch": 8,
+            "grad_accum_steps": 16,
+            "effective_batch": 128
+        }
     },
-    "trial_number": 1
+    "trial_number": null
 }

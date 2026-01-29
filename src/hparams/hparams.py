@@ -25,7 +25,6 @@ def make_param_groups(model):
         {"params": no_decay, "weight_decay": 0.0},
     ]
 
-optimizer = AdamW(make_param_groups(model), lr=LR_MAX, betas=BETAS)
 
 def lr_at_epoch(epoch):
     # warmup: linear LR_MIN -> LR_MAX

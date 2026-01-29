@@ -27,6 +27,20 @@ from peft import get_peft_model, LoraConfig
 from torch.cuda.amp import GradScaler
 from sklearn.metrics import balanced_accuracy_score, f1_score, classification_report
 from collections import Counter
+import torch.nn.functional as F
+
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=None, gamma=2.0):
+        super().__init__()
+        self.alpha = alpha  # class weights
+        self.gamma = gamma  # focusing parameter
+        
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none', weight=self.alpha)
+        pt = torch.exp(-ce_loss)
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        return focal_loss.mean()
+
 
 # -------------------------
 # Paper-aligned training hparams
@@ -98,19 +112,30 @@ def lr_at_epoch(epoch: int) -> float:
 
 # AdamW param groups: no weight decay on bias/norm
 def make_param_groups(model: torch.nn.Module, weight_decay: float):
-    decay, no_decay = [], []
+    decay, no_decay, lora = [], [], []
+
     for name, p in model.named_parameters():
         if not p.requires_grad:
             continue
-        # no WD on bias; commonly also no WD on LayerNorm/BatchNorm params
-        if name.endswith(".bias") or "norm" in name.lower() or "bn" in name.lower():
+
+        name_l = name.lower()
+        if "lora_" in name_l:
+            lora.append(p)
+        elif name.endswith(".bias") or "norm" in name_l or "bn" in name_l:
             no_decay.append(p)
         else:
             decay.append(p)
-    return [
-        {"params": decay, "weight_decay": weight_decay},
-        {"params": no_decay, "weight_decay": 0.0},
-    ]
+
+    groups = []
+    if decay:
+        groups.append({"params": decay, "weight_decay": weight_decay})
+    if no_decay:
+        groups.append({"params": no_decay, "weight_decay": 0.0})
+    if lora:
+        groups.append({"params": lora, "weight_decay": 0.0})  # key: no WD on LoRA
+
+    return groups
+
 
 
 def main():
@@ -168,38 +193,65 @@ def main():
     train_dataset.load_labels_from_csv(train_csv_paths)
     validation_dataset.load_labels_from_csv(val_csv_paths)
 
+    
     labels = np.array([train_dataset[i][1] for i in range(len(train_dataset))])
     class_counts = np.bincount(labels, minlength=NUM_CLASSES)
-    class_weights_np = 1.0 / np.clip(class_counts, a_min=1, a_max=None)
 
-    sample_weights = class_weights_np[labels]
-    sampler = WeightedRandomSampler(
-        weights=torch.as_tensor(sample_weights, dtype=torch.double),
-        num_samples=len(sample_weights),
-        replacement=True
-    )
+    print(f"\n{'='*60}")
+    print(f"CLASS DISTRIBUTION:")
+    print(f"{'='*60}")
+    for i, count in enumerate(class_counts):
+        print(f"Class {i}: {count:5d} samples ({count/len(labels)*100:.1f}%)")
+    print(f"{'='*60}\n")
 
+
+    class_weights_np = len(labels) / (NUM_CLASSES * class_counts.astype(float))
+    
+    # IMPORTANT: Cap weights to prevent extreme values that cause model collapse
+    max_weight = 8.0  # Don't let any class have more than 5x weight
+    class_weights_np = np.clip(class_weights_np, None, max_weight)
+    class_weights_np = class_weights_np / class_weights_np.sum() * NUM_CLASSES  # Re-normalize
+
+    class_weights_tensor = torch.FloatTensor(class_weights_np).to(DEVICE)
+
+    print(f"CLASS WEIGHTS (Balanced, capped at {max_weight}x):")
+    for i, weight in enumerate(class_weights_np):
+        print(f"Class {i}: {weight:.4f}")
+    print()
+
+
+
+    # Visualize distribution
     classes = list(range(NUM_CLASSES))
     counts = class_counts.tolist()
 
-    plt.figure(figsize=(8, 5))
-    plt.bar(classes, counts)
-    plt.xlabel("Class label")
-    plt.ylabel("Number of samples")
-    plt.title("Training samples per class")
+    plt.figure(figsize=(10, 6))
+    plt.subplot(1, 2, 1)
+    plt.bar(classes, counts, color='steelblue')
+    plt.xlabel("Class Label")
+    plt.ylabel("Number of Samples")
+    plt.title("Original Training Distribution")
+    plt.xticks(classes)
+
+    plt.subplot(1, 2, 2)
+    plt.bar(classes, class_weights_np, color='coral')
+    plt.xlabel("Class Label")
+    plt.ylabel("Loss Weight")
+    plt.title("Class Weights Applied")
     plt.xticks(classes)
     plt.tight_layout()
-    plt.savefig("../train_class_distribution.jpg")
-
+    plt.savefig("../train_class_distribution_and_weights.jpg")
+    plt.close()
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=MICRO_BATCH_SIZE,
-        shuffle=True,
+        shuffle=True,  
         num_workers=NUM_WORKERS,
         pin_memory=True,
         persistent_workers=True
     )
+
     validation_loader = DataLoader(
         validation_dataset,
         batch_size=MICRO_BATCH_SIZE,
@@ -208,6 +260,8 @@ def main():
         pin_memory=True,
         persistent_workers=True
     )
+
+
 
     # Model + RETFound weights
     model = models_vit.__dict__["vit_large_patch16"](
@@ -244,7 +298,8 @@ def main():
 
     # Loss
     class_weights = weighted_class_imbalance(train_dataset).to(DEVICE)
-    criterion = nn.CrossEntropyLoss()
+    # criterion = FocalLoss(alpha=class_weights_tensor, gamma=2.0)
+    criterion = nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
 
     # Optimizer (paper-ish)
     optimizer = torch.optim.AdamW(
