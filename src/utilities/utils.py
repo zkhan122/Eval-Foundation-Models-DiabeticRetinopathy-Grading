@@ -13,9 +13,45 @@ from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_
 import seaborn as sn
 import pandas as pd
 from .plots import generate_confusion_matrix
+from PIL import Image, ImageFile
+
+# need to allow truncated images such as those in EYEPACS
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+
+def _is_image_valid(path: str) -> bool:
+    try:
+        # quick empty-file guard
+        if os.path.getsize(path) < 1024:
+            return False
+
+        with Image.open(path) as img:
+            img.convert("RGB")   # force decode
+        return True
+
+    except Exception:
+        return False
+
 
 def identity_transform(x):
     return x
+
+
+def normalize_stem(x) -> str:
+    return Path(str(x).strip()).stem.lower()
+
+
+def normalize_deepdrid(x) -> str:
+    """
+    Converts:
+      343_l2.jpg -> 343
+      343_r1.png -> 343
+      343         -> 343
+    """
+    s = Path(str(x).strip()).stem.lower()
+    return s.split("_")[0]
+
+
 
 
 # for data imbalance

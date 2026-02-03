@@ -8,6 +8,8 @@ from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 from PIL import Image
 from collections import Counter
+from utilities.utils import normalize_stem, _is_image_valid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 valid_file_extensions = ["jpg", "jpeg", "png"]
 
@@ -28,19 +30,68 @@ class CombinedDRDataSet(Dataset):
         # to track which dataset each image comes from
         self.sources = []
 
-        if "IDRID" in self.root_directories:
+        if "IDRID" in self.root_directories: # pre usage
             self.load_IDRID()
+        
         if "DEEPDRID" in self.root_directories:
             self.load_DEEPDRID()
 
-        if "MESSIDOR" in self.root_directories:
+        if "MESSIDOR" in self.root_directories: # pre usage
             self.load_MESSIDOR()
 
         if "MFIDDR" in self.root_directories:
             self.load_MFIDDR()
+        
+        if "APTOS" in self.root_directories:
+            self.load_APTOS()
+
+        if "DDR" in self.root_directories:
+            self.load_DDR()
+
+        if "EYEPACS" in self.root_directories:
+            self.load_EYEPACS()
+
+
 
     def __len__(self) -> int:
         return len(self.image_paths)
+
+    
+    def prune_unlabeled(self):
+        filtered = [
+            (p, l, s)
+            for p, l, s in zip(self.image_paths, self.labels, self.sources)
+            if l is not None
+        ]
+
+        self.image_paths, self.labels, self.sources = map(list, zip(*filtered))
+        print(f"Pruned dataset to remove unlabeled samples -- {len(self.labels)} labeled samples.")
+
+
+    def prune_corrupted_images(self, num_workers: int = 16):
+        print("Pruning corrupted images (threaded)...")
+
+        valid_indices = []
+
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {
+                executor.submit(_is_image_valid, path): idx
+                for idx, path in enumerate(self.image_paths)
+            }
+
+            for future in as_completed(futures):
+                idx = futures[future]
+                if future.result():
+                    valid_indices.append(idx)
+                else:
+                    print(f"Removing corrupted image: {self.image_paths[idx]}")
+
+        self.image_paths = [self.image_paths[i] for i in valid_indices]
+        self.labels      = [self.labels[i] for i in valid_indices]
+        self.sources     = [self.sources[i] for i in valid_indices]
+
+        print(f"Dataset size after corruption prune: {len(self.labels)}")
+
 
     def load_MFIDDR(self):
         MFIDDR_ROOT = Path(self.root_directories["MFIDDR"])
@@ -140,7 +191,7 @@ class CombinedDRDataSet(Dataset):
                 if file_extension in valid_file_extensions:
                     full_image_path = subdir_path / image_file_path
                     self.image_paths.append(str(full_image_path))
-                    self.labels.append(filename)
+                    # self.labels.append(filename)
                     self.sources.append("DEEPDRID")
                     loaded_count += 1
 
@@ -174,24 +225,106 @@ class CombinedDRDataSet(Dataset):
                 self.image_paths.append(str(image_dir / image_file_path)) 
                 self.labels.append(filename)
                 self.sources.append("MESSIDOR")
+    
+    def load_APTOS(self):
+
+        APTOS_ROOT = Path(self.root_directories["APTOS"])
+
+        print(f"\nAPTOS_ROOT: {APTOS_ROOT}")
+        print(f"APTOS_ROOT exists: {APTOS_ROOT.exists()}")
+
+        image_dir = None
+        if self.split == "train":
+            image_dir = APTOS_ROOT / "train_images"
+        elif self.split == "val":
+            image_dir = APTOS_ROOT / "val_images"
+        elif self.split == "test":
+            image_dir = APTOS_ROOT / "test_images"
+        else:
+            raise ValueError(f"Invalid argument for split identified in {APTOS_ROOT}")
 
 
-    def extract_label_deepdr(self, filename: str):
-        return 0
+        if not image_dir.exists():
+            print(f"Error: APTOS path not found at {image_dir}")
 
-    def extract_labels_mfiddr(self, filename: str):
-        return 0
-    
-    def extract_label_idrid(self, filename: str):
-        return 0
-    
-    def extract_label_messidor(self, filename:str):
-        return 0
-    
+        # collecting the images
+
+        for image_file_path in os.listdir(image_dir):
+            filename, file_extension = os.path.splitext(image_file_path)
+            file_extension = file_extension.lstrip('.').lower()
+            if file_extension in valid_file_extensions:
+                self.image_paths.append(str(image_dir / image_file_path))
+                self.labels.append(filename)
+                self.sources.append("APTOS") 
+
+
+    def load_DDR(self):
+        DDR_ROOT = Path(self.root_directories["DDR"])
+
+        print(f"\nDDR_ROOT: {DDR_ROOT}")
+        print(f"DDR_ROOT exists: {DDR_ROOT.exists()}")
+
+
+        image_dir = None
+        if self.split == "train":
+            image_dir = DDR_ROOT / "train"
+        elif self.split == "val":
+            image_dir = DDR_ROOT / "val"
+        elif self.split == "test":
+            image_dir = MESSIDOR_ROOT / "test"
+        else:
+            raise ValueError(f"Invalid argument for split identified in {DDR_ROOT}")
+
+
+        if not image_dir.exists():
+            print(f"Error: DDR path not found at {image_dir}")
+
+        # collecting the images
+
+        for image_file_path in os.listdir(image_dir):
+            filename, file_extension = os.path.splitext(image_file_path)
+            file_extension = file_extension.lstrip('.').lower()
+            if file_extension in valid_file_extensions:
+                self.image_paths.append(str(image_dir / image_file_path))
+                self.labels.append(filename)
+                self.sources.append("DDR")
+
+
+    def load_EYEPACS(self):
+        EYEPACS_ROOT = Path(self.root_directories["EYEPACS"])
+
+        print(f"\nEYEPACS_ROOT: {EYEPACS_ROOT}")
+        print(f"EYEPACS_ROOT exists: {EYEPACS_ROOT.exists()}")
+
+
+        image_dir = None
+        if self.split == "train":
+            image_dir = EYEPACS_ROOT / "train"
+        elif self.split == "val":
+            image_dir = EYEPACS_ROOT / "val"
+        elif self.split == "test":
+            image_dir = MESSIDOR_ROOT / "test"
+        else:
+            raise ValueError(f"Invalid argument for split identified in {EYEPACS_ROOT}")
+
+
+        if not image_dir.exists():
+            print(f"Error: MESSIDOR path not found at {image_dir}")
+
+        # collecting the images
+
+        for image_file_path in os.listdir(image_dir):
+            filename, file_extension = os.path.splitext(image_file_path)
+            file_extension = file_extension.lstrip('.').lower()
+            if file_extension in valid_file_extensions:
+                self.image_paths.append(str(image_dir / image_file_path))
+                self.labels.append(filename)
+                self.sources.append("EYEPACS")
+
+
 
     def load_labels_from_csv(self, csv_paths_dict: Dict[str, str]):
-            if len(self.labels) == 0:
-                self.labels = [None] * len(self.image_paths)
+            self.labels = [None] * len(self.image_paths)
 
             for dataset_name, csv_path in csv_paths_dict.items():
                 print(f"\n--- Processing {dataset_name} ---")
@@ -208,10 +341,25 @@ class CombinedDRDataSet(Dataset):
                     label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["Image name"], labels_df["Retinopathy grade"])}
                 
                 elif dataset_name == "DEEPDRID":
-                    label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["image_id"], labels_df["patient_DR_Level"])}
+                    label_dict = {
+                            normalize_stem(k): int(v)
+                            for k, v in zip(labels_df["image_id"], labels_df["patient_DR_Level"])
+                            if pd.notna(v)
+                    }
+
+                    print("DEEPDRID CSV columns:", labels_df.columns.tolist())
+                    print("DEEPDRID CSV sample image_id:", labels_df["image_id"].head(10).tolist())
+
+                    print("DEEPDRID dict size:", len(label_dict))
+                    print("DEEPDRID dict sample keys:", list(label_dict.keys())[:10])
+
+                    deepdrid_samples = [p for p, s in zip(self.image_paths, self.sources) if s == "DEEPDRID"][:10]
+                    print("DEEPDRID sample file stems:", [normalize_stem(Path(p).name) for p in deepdrid_samples])
+
+
 
                 elif dataset_name == "MESSIDOR":
-                    label_dict = {str(k).strip().lower(): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])}
+                    label_dict = {normalize_stem(k).strip().lower(): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])}
 
                 elif dataset_name == "MFIDDR":
                     print("Building MFIDDR dictionary from columns id1-id4...")
@@ -226,6 +374,15 @@ class CombinedDRDataSet(Dataset):
                         except ValueError:
                             continue
 
+                elif dataset_name == "APTOS":
+                    label_dict = {str(k).strip().lower(): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])}
+
+                elif dataset_name == "DDR":
+                    label_dict = {normalize_stem(k): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])}
+                
+                elif dataset_name == "EYEPACS":                    
+                    label_dict = {normalize_stem(k).strip().lower(): int(v) for k, v in zip(labels_df["image"], labels_df["level"])}
+
                 print(f"DEBUG: First 3 keys in {dataset_name} dict: {list(label_dict.keys())[:3]}")
 
                 matched_count = 0
@@ -236,17 +393,10 @@ class CombinedDRDataSet(Dataset):
                         continue
                     
                     # Default: Use stem and original case (works for IDRID/DEEPDRID)
-                    filename_for_lookup = Path(img_path).stem 
+                    filename_for_lookup = normalize_stem(Path(img_path).name) 
 
-                    # CONDITION: Apply specific logic only for MESSIDOR
-                    if source == "MESSIDOR":
-                        # For MESSIDOR, we need the full name and lowercase matching the dictionary keys
-                        filename_for_lookup = Path(img_path).name.strip().lower()
-                    
-                    # CONDITION: Apply specific logic for MFIDDR if its CSV contains stems
-                    elif source == "MFIDDR":
-                        # MFIDDR uses stem and we must convert it to lowercase to match the dict
-                        filename_for_lookup = Path(img_path).stem.strip().lower()
+
+
 
                     # --- Lookup ---
                     if filename_for_lookup in label_dict:
@@ -283,7 +433,7 @@ class CombinedDRDataSet(Dataset):
                     label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["Image name"], labels_df["Retinopathy grade"])}
 
                 elif dataset_name == "DEEPDRID":
-                    label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["image_id"], labels_df["DR_Levels"])}
+                    label_dict = {normalize_stem(k): int(v) for k, v in zip(labels_df["image_id"], labels_df["patient_DR_Level"]) if pd.notna(v)}
 
                 elif dataset_name == "MESSIDOR":
                     label_dict = {str(k).strip().lower(): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])}

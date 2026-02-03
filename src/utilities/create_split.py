@@ -45,3 +45,7 @@ def extract_for_split(source_folder, destination_folder, test_fraction):
         shutil.move(source_path, destination_path) # to make sure the images going to the test dataset do not remain original
 
     print("Successfully copied {} images to '{}'.".format(len(selected_files), destination_folder))
+
+
+
+extract_for_split("/vol/research/ZayaanProject2025-26/Eval-Foundation-Models-DiabeticRetinopathy-Grading/datasets/EYEPACS/train", "/vol/research/ZayaanProject2025-26/Eval-Foundation-Models-DiabeticRetinopathy-Grading/datasets/EYEPACS/test", 0.1)

@@ -144,8 +144,8 @@ def main():
 
     train_root_directories = {
         "DEEPDRID": f"{DATA_DIR}/DeepDRiD",
-        "IDRID": f"{DATA_DIR}/IDRID",
-        "MESSIDOR": f"{DATA_DIR}/MESSIDOR",
+        "EYEPACS": f"{DATA_DIR}/EYEPACS",
+        "DDR": f"{DATA_DIR}/DDR",
     }
     val_root_directories = dict(train_root_directories)
 
@@ -180,21 +180,28 @@ def main():
     )
 
     train_csv_paths = {
-        "IDRID": f"{train_root_directories['IDRID']}/B-Disease-Grading/Disease-Grading/2-Groundtruths/IDRiD_Disease_Grading_Training_Labels.csv",
         "DEEPDRID": f"{train_root_directories['DEEPDRID']}/regular_fundus_images/regular-fundus-training/regular-fundus-training.csv",
-        "MESSIDOR": f"{train_root_directories['MESSIDOR']}/messidor_data.csv",
+        "EYEPACS": f"{train_root_directories['EYEPACS']}/all_labels.csv",
+        "DDR": f"{train_root_directories['DDR']}/DR_grading.csv"
     }
+
     val_csv_paths = {
-        "IDRID": f"{val_root_directories['IDRID']}/B-Disease-Grading/Disease-Grading/2-Groundtruths/IDRiD_Disease_Grading_Training_Labels.csv",
-        "DEEPDRID": f"{val_root_directories['DEEPDRID']}/regular_fundus_images/regular-fundus-validation/regular-fundus-validation.csv",
-        "MESSIDOR": f"{val_root_directories['MESSIDOR']}/messidor_data.csv",
-    }
+        "DEEPDRID": f"{train_root_directories['DEEPDRID']}/regular_fundus_images/regular-fundus-validation/regular-fundus-validation.csv",
+        "EYEPACS": f"{train_root_directories['EYEPACS']}/all_labels.csv",
+        "DDR": f"{train_root_directories['DDR']}/DR_grading.csv"
+     }
+
 
     train_dataset.load_labels_from_csv(train_csv_paths)
     validation_dataset.load_labels_from_csv(val_csv_paths)
-
     
-    labels = np.array([train_dataset[i][1] for i in range(len(train_dataset))])
+    train_dataset.prune_unlabeled()
+
+    validation_dataset.prune_unlabeled()
+    
+    
+    # labels = np.array([train_dataset[i][1] for i in range(len(train_dataset))])
+    labels = np.array(train_dataset.labels, dtype=np.int64)
     class_counts = np.bincount(labels, minlength=NUM_CLASSES)
 
     print(f"\n{'='*60}")
@@ -339,7 +346,8 @@ def main():
 
         print(f"val_acc={val_acc:.2f}% | bal_acc={val_bal_acc:.2f}% | macro_f1={val_macro_f1:.2f}%")
         print(report)
-
+        
+        # NEED TO CHANGE THIS - ACC IS NOT GOOD METRIC ANYWAYS
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
