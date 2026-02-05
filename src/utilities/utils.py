@@ -79,14 +79,16 @@ def normalize_deepdrid(x) -> str:
 
 
 
+def class_balanced_weights(class_counts, beta, device):
+    class_counts = np.asarray(class_counts, dtype=np.float32)
 
-# for data imbalance
-def weighted_class_imbalance(dataset):
-    labels = [label for _, label, _ in dataset]
-    class_counts = np.bincount(labels)
-    class_weights = 1.0 / class_counts
-    class_weights = class_weights / class_weights.sum() * len(class_weights)
-    return torch.FloatTensor(class_weights)
+    effective_num = 1.0 - np.power(beta, class_counts)
+    weights = (1.0-beta) / np.maximum(effective_num, 1e-8)
+    weights = weights / weights.mean()
+    weights = torch.FloatTensor(weights)
+    if device is not None: 
+        weights = weights.to(device)
+    return weights
 
 
 
@@ -482,7 +484,12 @@ def test_retfound(model, dataloader, criterion, device):
 
     with torch.no_grad():
         pbar = tqdm(dataloader, desc='Test Run Progress')
-        for batch_idx, (images, labels, sources) in enumerate(pbar):
+        for batch_idx, batch in enumerate(pbar):
+            if len(batch) == 3:
+                images, labels, sources = batch
+            else:
+                images, labels = batch
+
             images = images.to(device)
             labels = labels.to(device)
 

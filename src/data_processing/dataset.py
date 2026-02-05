@@ -299,7 +299,7 @@ class CombinedDRDataSet(Dataset):
         elif self.split == "val":
             image_dir = DDR_ROOT / "val"
         elif self.split == "test":
-            image_dir = MESSIDOR_ROOT / "test"
+            image_dir = DDR_ROOT / "test"
         else:
             raise ValueError(f"Invalid argument for split identified in {DDR_ROOT}")
 
@@ -331,7 +331,7 @@ class CombinedDRDataSet(Dataset):
         elif self.split == "val":
             image_dir = EYEPACS_ROOT / "val"
         elif self.split == "test":
-            image_dir = MESSIDOR_ROOT / "test"
+            image_dir = EYEPACS_ROOT / "test"
         else:
             raise ValueError(f"Invalid argument for split identified in {EYEPACS_ROOT}")
 
@@ -443,9 +443,13 @@ class CombinedDRDataSet(Dataset):
 
 
     def load_labels_from_csv_for_test(self, csv_paths_dict: Dict[str, str]):
-            if len(self.labels) == 0:
+            
+            if len(self.labels) != len(self.image_paths):
+                print(f"[Label Resize] labels={len(self.labels)} → images={len(self.image_paths)}")
                 self.labels = [None] * len(self.image_paths)
+            assert len(self.labels) == len(self.image_paths)
 
+                
             for dataset_name, csv_path in csv_paths_dict.items():
                 print(f"\n--- Processing {dataset_name} ---")
                 if not os.path.exists(csv_path):
@@ -457,14 +461,14 @@ class CombinedDRDataSet(Dataset):
 
                 label_dict = {}
 
-                if dataset_name == "IDRID":
-                    label_dict = {str(k).strip(): int(v) for k, v in zip(labels_df["Image name"], labels_df["Retinopathy grade"])}
+                if dataset_name == "DDR": 
+                    label_dict = {normalize_stem(k): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])}
 
-                elif dataset_name == "DEEPDRID":
-                    label_dict = {normalize_stem(k): int(v) for k, v in zip(labels_df["image_id"], labels_df["patient_DR_Level"]) if pd.notna(v)}
+                elif dataset_name == "DEEPDRID": 
+                    label_dict = {normalize_stem(k): int(v) for k, v in zip(labels_df["image_id"], labels_df["DR_Levels"]) if pd.notna(v)}
 
-                elif dataset_name == "MESSIDOR":
-                    label_dict = {str(k).strip().lower(): int(v) for k, v in zip(labels_df["id_code"], labels_df["diagnosis"])}
+                elif dataset_name == "EYEPACS": # replace with eyepacs
+                    label_dict = {normalize_stem(k).strip().lower(): int(v) for k, v in zip(labels_df["image"], labels_df["level"])}
 
                 elif dataset_name == "MFIDDR":
                     print("Building MFIDDR dictionary from columns id1-id4...")
@@ -489,17 +493,8 @@ class CombinedDRDataSet(Dataset):
                         continue
 
                     # Default: Use stem and original case (works for IDRID/DEEPDRID)
-                    filename_for_lookup = Path(img_path).stem
+                    filename_for_lookup = normalize_stem(Path(img_path).name)
 
-                    # CONDITION: Apply specific logic only for MESSIDOR
-                    if source == "MESSIDOR":
-                        # For MESSIDOR, we need the full name and lowercase matching the dictionary keys
-                        filename_for_lookup = Path(img_path).name.strip().lower()
-
-                    # CONDITION: Apply specific logic for MFIDDR if its CSV contains stems
-                    elif source == "MFIDDR":
-                        # MFIDDR uses stem and we must convert it to lowercase to match the dict
-                        filename_for_lookup = Path(img_path).stem.strip().lower()
 
                     # --- Lookup ---
                     if filename_for_lookup in label_dict:

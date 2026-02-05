@@ -18,9 +18,9 @@ from torch import nn
 from data_processing.dataset import CombinedDRDataSet
 from utilities.utils import (
     identity_transform,
+    class_balanced_weights,
     train_one_epoch_retfound,
     validate_retfound,
-    weighted_class_imbalance,
     validate_retfound_with_metrics,
     subsample_dataset
 )
@@ -52,8 +52,8 @@ NUM_EPOCHS = 50
 WARMUP_EPOCHS = 5
 COOLDOWN_EPOCHS = 10
 
-LR_MAX = 5e-5
-LR_MIN = 5e-9
+LR_MIN = 1e-6
+LR_MAX = 5e-4
 
 BETAS = (0.9, 0.99)
 WEIGHT_DECAY = 5e-4
@@ -73,7 +73,6 @@ LORA_DROPOUT = 0.05
 
 # Optional stability knobs
 MAX_GRAD_NORM = 1.0
-SEED = 42
 
 print(f"Using device: {DEVICE}")
 print(f"Micro batch: {MICRO_BATCH_SIZE} | Effective batch: {MICRO_BATCH_SIZE * GRAD_ACCUM_STEPS} "
@@ -91,7 +90,7 @@ def seed_everything(seed: int):
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
-seed_everything(SEED)
+seed_everything(42)
 
 
 # RETFOUND LR schedule: warmup -> cosine -> cooldown according to paper
@@ -149,8 +148,7 @@ def create_balanced_sampler(dataset, num_classes=NUM_CLASSES):
     class_counts = np.bincount(labels, minlength=num_classes)
     
     # Calculate weights for each class (inverse frequency)
-    class_weights = 1.0 / (class_counts + 1e-6)  # Add epsilon to avoid division by zero
-    
+    class_weights = class_balanced_weights(class_counts, beta=0.9999, device=DEVICE) 
     # Assign weight to each sample based on its class
     sample_weights = class_weights[labels]
     
@@ -251,7 +249,7 @@ def main():
     class_weights_np = len(labels) / (NUM_CLASSES * class_counts.astype(float))
     
     # IMPORTANT: Cap weights to prevent extreme values that cause model collapse
-    max_weight = 8.0
+    max_weight = 12.0
     class_weights_np = np.clip(class_weights_np, None, max_weight)
     class_weights_np = class_weights_np / class_weights_np.sum() * NUM_CLASSES  # Re-normalize
 
@@ -288,7 +286,9 @@ def main():
     print("\n" + "="*60)
     print("CREATING BALANCED SAMPLER FOR TRAINING")
     print("="*60)
-    train_sampler = create_balanced_sampler(train_dataset, NUM_CLASSES)
+    
+    
+
     print("="*60 + "\n")
     # =================================================================
 
@@ -296,7 +296,7 @@ def main():
     train_loader = DataLoader(
         train_dataset,
         batch_size=MICRO_BATCH_SIZE,
-        sampler=train_sampler,  # USE SAMPLER instead of shuffle
+        shuffle=True,
         num_workers=NUM_WORKERS,
         pin_memory=True,
         persistent_workers=True,
@@ -349,8 +349,9 @@ def main():
 
     # ==================== LOSS FUNCTION ====================
     # OPTION 1: Focal Loss (recommended for imbalanced data)
-    criterion = FocalLoss(alpha=class_weights_tensor, gamma=2.0)
     
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+
     # OPTION 2: CrossEntropyLoss with label smoothing (if Focal Loss doesn't work)
     # criterion = nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
     
@@ -401,7 +402,7 @@ def main():
         )
 
         # Validate less frequently in early epochs to speed up training
-        if epoch < 20 and epoch % 5 != 0:
+        if epoch < 20 and (epoch+1) % 5 != 0:
             # Skip validation for first 20 epochs except every 5th
             print(f"Epoch {epoch+1:03d}/{NUM_EPOCHS} | "
                   f"lr={lr:.2e} | "
