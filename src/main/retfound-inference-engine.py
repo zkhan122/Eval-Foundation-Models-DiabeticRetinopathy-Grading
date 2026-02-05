@@ -21,7 +21,8 @@ from utilities.utils import (
     train_one_epoch_retfound,
     validate_retfound,
     weighted_class_imbalance,
-    validate_retfound_with_metrics
+    validate_retfound_with_metrics,
+    subsample_dataset
 )
 from peft import get_peft_model, LoraConfig
 from torch.cuda.amp import GradScaler
@@ -47,9 +48,9 @@ class FocalLoss(nn.Module):
 # -------------------------
 NUM_CLASSES = 5
 
-NUM_EPOCHS = 120
-WARMUP_EPOCHS = 10
-COOLDOWN_EPOCHS = 20
+NUM_EPOCHS = 50
+WARMUP_EPOCHS = 5
+COOLDOWN_EPOCHS = 10
 
 LR_MAX = 5e-5
 LR_MIN = 5e-9
@@ -62,7 +63,7 @@ MICRO_BATCH_SIZE = 8   # set to what fits on your GPU (e.g., 4, 8, 16)
 EFFECTIVE_BATCH_SIZE = 128
 GRAD_ACCUM_STEPS = max(1, EFFECTIVE_BATCH_SIZE // MICRO_BATCH_SIZE)
 
-NUM_WORKERS = 4
+NUM_WORKERS = 8  # INCREASED from 4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # LoRA (fixed baseline; tune later once stable)
@@ -137,6 +138,34 @@ def make_param_groups(model: torch.nn.Module, weight_decay: float):
     return groups
 
 
+def create_balanced_sampler(dataset, num_classes=NUM_CLASSES):
+    """
+    Create a WeightedRandomSampler that balances classes during training.
+    Each sample gets weighted inversely to its class frequency.
+    """
+    labels = np.array(dataset.labels, dtype=np.int64)
+    
+    # Calculate class counts
+    class_counts = np.bincount(labels, minlength=num_classes)
+    
+    # Calculate weights for each class (inverse frequency)
+    class_weights = 1.0 / (class_counts + 1e-6)  # Add epsilon to avoid division by zero
+    
+    # Assign weight to each sample based on its class
+    sample_weights = class_weights[labels]
+    
+    # Create sampler
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True  # Allow oversampling minority classes
+    )
+    
+    print(f"Created balanced sampler with {len(sample_weights)} samples")
+    print(f"Sample weights range: [{sample_weights.min():.4f}, {sample_weights.max():.4f}]")
+    
+    return sampler
+
 
 def main():
     DATA_DIR = "../../datasets"
@@ -156,7 +185,6 @@ def main():
         transforms.RandomRotation(15),
         transforms.ColorJitter(brightness=0.2, contrast=0.2),
         transforms.ToTensor(),
-        # NOTE: this is ImageNet normalization; keep for now, but consider matching RETFound's expected preprocessing if specified.
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
@@ -191,16 +219,24 @@ def main():
         "DDR": f"{train_root_directories['DDR']}/DR_grading.csv"
      }
 
-
     train_dataset.load_labels_from_csv(train_csv_paths)
     validation_dataset.load_labels_from_csv(val_csv_paths)
     
     train_dataset.prune_unlabeled()
-
     validation_dataset.prune_unlabeled()
     
-    
-    # labels = np.array([train_dataset[i][1] for i in range(len(train_dataset))])
+    print("\n" + "="*60)
+    print("SUBSAMPLING LARGE DATASETS")
+    print("="*60)
+    print(f"Before subsampling: {len(train_dataset)} samples")
+
+    train_dataset = subsample_dataset(train_dataset, max_samples_per_class=3000)
+
+    print(f"After subsampling: {len(train_dataset)} samples")
+    print("="*60 + "\n")
+
+
+    # Get class distribution
     labels = np.array(train_dataset.labels, dtype=np.int64)
     class_counts = np.bincount(labels, minlength=NUM_CLASSES)
 
@@ -211,11 +247,11 @@ def main():
         print(f"Class {i}: {count:5d} samples ({count/len(labels)*100:.1f}%)")
     print(f"{'='*60}\n")
 
-
+    # Calculate class weights with capping
     class_weights_np = len(labels) / (NUM_CLASSES * class_counts.astype(float))
     
     # IMPORTANT: Cap weights to prevent extreme values that cause model collapse
-    max_weight = 8.0  # Don't let any class have more than 5x weight
+    max_weight = 8.0
     class_weights_np = np.clip(class_weights_np, None, max_weight)
     class_weights_np = class_weights_np / class_weights_np.sum() * NUM_CLASSES  # Re-normalize
 
@@ -225,8 +261,6 @@ def main():
     for i, weight in enumerate(class_weights_np):
         print(f"Class {i}: {weight:.4f}")
     print()
-
-
 
     # Visualize distribution
     classes = list(range(NUM_CLASSES))
@@ -250,25 +284,35 @@ def main():
     plt.savefig("../train_class_distribution_and_weights.jpg")
     plt.close()
 
+    # ==================== CREATE BALANCED SAMPLER ====================
+    print("\n" + "="*60)
+    print("CREATING BALANCED SAMPLER FOR TRAINING")
+    print("="*60)
+    train_sampler = create_balanced_sampler(train_dataset, NUM_CLASSES)
+    print("="*60 + "\n")
+    # =================================================================
+
+    # ==================== OPTIMIZED DATALOADERS ====================
     train_loader = DataLoader(
         train_dataset,
         batch_size=MICRO_BATCH_SIZE,
-        shuffle=True,  
+        sampler=train_sampler,  # USE SAMPLER instead of shuffle
         num_workers=NUM_WORKERS,
         pin_memory=True,
-        persistent_workers=True
+        persistent_workers=True,
+        prefetch_factor=4  # Prefetch 4 batches per worker
     )
 
     validation_loader = DataLoader(
         validation_dataset,
         batch_size=MICRO_BATCH_SIZE,
         shuffle=False,
-        num_workers=NUM_WORKERS,
+        num_workers=NUM_WORKERS // 2,  # Fewer workers for validation
         pin_memory=True,
-        persistent_workers=True
+        persistent_workers=True,
+        prefetch_factor=2  # Less prefetching for validation
     )
-
-
+    # ===============================================================
 
     # Model + RETFound weights
     model = models_vit.__dict__["vit_large_patch16"](
@@ -303,10 +347,17 @@ def main():
     model = get_peft_model(model, peft_config)
     model = model.to(DEVICE)
 
-    # Loss
-    class_weights = weighted_class_imbalance(train_dataset).to(DEVICE)
-    # criterion = FocalLoss(alpha=class_weights_tensor, gamma=2.0)
-    criterion = nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
+    # ==================== LOSS FUNCTION ====================
+    # OPTION 1: Focal Loss (recommended for imbalanced data)
+    criterion = FocalLoss(alpha=class_weights_tensor, gamma=2.0)
+    
+    # OPTION 2: CrossEntropyLoss with label smoothing (if Focal Loss doesn't work)
+    # criterion = nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
+    
+    print(f"\n{'='*60}")
+    print(f"Using Focal Loss with gamma=2.0 and class weights")
+    print(f"{'='*60}\n")
+    # =======================================================
 
     # Optimizer (paper-ish)
     optimizer = torch.optim.AdamW(
@@ -315,10 +366,21 @@ def main():
         betas=BETAS
     )
 
-    scaler = GradScaler()
+    scaler = GradScaler()  
 
     best_val_acc = 0.0
+    best_val_bal_acc = 0.0  # Track balanced accuracy too
     best_state = None
+
+    print(f"\n{'='*60}")
+    print(f"STARTING TRAINING")
+    print(f"{'='*60}")
+    print(f"Total epochs: {NUM_EPOCHS}")
+    print(f"Warmup epochs: {WARMUP_EPOCHS}")
+    print(f"Cooldown epochs: {COOLDOWN_EPOCHS}")
+    print(f"Training samples: {len(train_dataset)}")
+    print(f"Validation samples: {len(validation_dataset)}")
+    print(f"{'='*60}\n")
 
     for epoch in range(NUM_EPOCHS):
         # set epoch LR per paper schedule
@@ -338,7 +400,18 @@ def main():
             max_grad_norm=MAX_GRAD_NORM,
         )
 
-        val_loss, val_acc, val_bal_acc, val_macro_f1, report = validate_retfound_with_metrics(model, validation_loader, criterion, DEVICE, NUM_CLASSES)
+        # Validate less frequently in early epochs to speed up training
+        if epoch < 20 and epoch % 5 != 0:
+            # Skip validation for first 20 epochs except every 5th
+            print(f"Epoch {epoch+1:03d}/{NUM_EPOCHS} | "
+                  f"lr={lr:.2e} | "
+                  f"train_loss={train_loss:.4f} train_acc={train_acc:.2f}% | "
+                  f"[Skipping validation]")
+            continue
+
+        val_loss, val_acc, val_bal_acc, val_macro_f1, report = validate_retfound_with_metrics(
+            model, validation_loader, criterion, DEVICE, NUM_CLASSES
+        )
 
         print(f"Epoch {epoch+1:03d}/{NUM_EPOCHS} | "
               f"lr={lr:.2e} | "
@@ -347,15 +420,18 @@ def main():
         print(f"val_acc={val_acc:.2f}% | bal_acc={val_bal_acc:.2f}% | macro_f1={val_macro_f1:.2f}%")
         print(report)
         
-        # NEED TO CHANGE THIS - ACC IS NOT GOOD METRIC ANYWAYS
-        if val_acc > best_val_acc:
+        # Save best model based on BALANCED accuracy (better metric for imbalanced data)
+        if val_bal_acc > best_val_bal_acc:
+            best_val_bal_acc = val_bal_acc
             best_val_acc = val_acc
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            print(f"★ New best balanced accuracy: {best_val_bal_acc:.2f}% (acc: {best_val_acc:.2f}%)")
 
     os.makedirs("../best_models", exist_ok=True)
     save_path = "../best_models/best_retfound_model.pth"
     torch.save({
         "val_acc": best_val_acc,
+        "val_bal_acc": best_val_bal_acc,
         "model_state_dict": best_state,
         "lora": {"r": LORA_R, "alpha": LORA_ALPHA, "dropout": LORA_DROPOUT},
         "train": {
@@ -372,10 +448,14 @@ def main():
         }
     }, save_path)
 
-    print(f"\nBest Val Accuracy: {best_val_acc:.2f}%")
+    print(f"\n{'='*60}")
+    print(f"TRAINING COMPLETE")
+    print(f"{'='*60}")
+    print(f"Best Val Accuracy: {best_val_acc:.2f}%")
+    print(f"Best Balanced Accuracy: {best_val_bal_acc:.2f}%")
     print(f"Saved best model to: {save_path}")
+    print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
     main()
-

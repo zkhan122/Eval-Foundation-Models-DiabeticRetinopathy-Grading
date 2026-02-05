@@ -93,6 +93,34 @@ class CombinedDRDataSet(Dataset):
         print(f"Dataset size after corruption prune: {len(self.labels)}")
 
 
+    def cache_images_to_memory(self, max_workers: int = 8):
+        """Cache all images to RAM for faster training"""
+        print(f"Caching {len(self.image_paths)} images to memory...")
+        self.cached_images = [None] * len(self.image_paths)
+    
+        def load_single(idx):
+            try:
+                img = Image.open(self.image_paths[idx]).convert('RGB')
+                return idx, img
+            except Exception as e:
+                print(f"Failed to load {self.image_paths[idx]}: {e}")
+                return idx, None
+    
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(load_single, i) for i in range(len(self.image_paths))]
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Caching"):
+                idx, img = future.result()
+                if img is not None:
+                    self.cached_images[idx] = img
+    
+        valid_indices = [i for i, img in enumerate(self.cached_images) if img is not None]
+        self.image_paths = [self.image_paths[i] for i in valid_indices]
+        self.labels = [self.labels[i] for i in valid_indices]
+        self.sources = [self.sources[i] for i in valid_indices]
+        self.cached_images = [self.cached_images[i] for i in valid_indices]
+    
+        print(f"Cached {len(self.cached_images)} images successfully")
+
     def load_MFIDDR(self):
         MFIDDR_ROOT = Path(self.root_directories["MFIDDR"])
 
@@ -489,22 +517,25 @@ class CombinedDRDataSet(Dataset):
             return csv_paths_dict
 
 
+    def __getitem__(self, idx):
+        if hasattr(self, 'cached_images') and self.cached_images:
+            image = self.cached_images[idx].copy()
+        else:
+            image = Image.open(self.image_paths[idx]).convert("RGB")
 
-    def __getitem__(self, index) -> Tuple[torch.Tensor, int, str]:
-            img_path = self.image_paths[index]
-            label = self.labels[index] # can be int (0-4) OR string ("IDRiD_001") depending on match
-            source = self.sources[index]
+        if self.img_transform:
+            image = self.img_transform(image)
 
-            # loading the image 
-            image = Image.open(img_path).convert("RGB")
-            if self.img_transform is not None:
-                image = self.img_transform(image)
+        if self.label_transform:
+            label = self.label_transform(self.labels[idx])
 
-            if isinstance(label, str):
-                label = 0 
-                
-            return image, int(label), source
-    
+        else:
+            label = self.labels[idx]
+
+        return image, label
+   
+
+
     def get_dataset_statistics(self) -> Dict:
         count_sources = Counter(self.sources)
         count_labels = Counter(self.labels)

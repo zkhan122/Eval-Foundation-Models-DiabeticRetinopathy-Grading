@@ -33,6 +33,32 @@ def _is_image_valid(path: str) -> bool:
         return False
 
 
+def subsample_dataset(dataset, max_samples_per_class):
+    """Keep only max_samples_per_class from each class"""
+    from collections import defaultdict
+
+    class_indices = defaultdict(list)
+    for idx, label in enumerate(dataset.labels):
+        class_indices[label].append(idx)
+
+    # Sample from each class
+    selected_indices = []
+    for class_label, indices in class_indices.items():
+        if len(indices) <= max_samples_per_class:
+            selected_indices.extend(indices)
+        else:
+            # Randomly sample
+            import random
+            selected_indices.extend(random.sample(indices, max_samples_per_class))
+
+    # Update dataset
+    dataset.image_paths = [dataset.image_paths[i] for i in selected_indices]
+    dataset.labels = [dataset.labels[i] for i in selected_indices]
+    dataset.sources = [dataset.sources[i] for i in selected_indices]
+
+    print(f"Subsampled dataset: {len(selected_indices)} samples")
+    return dataset
+
 def identity_transform(x):
     return x
 
@@ -95,10 +121,15 @@ def train_one_epoch_retfound(
 
     progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1} - Training")
 
-    for batch_idx, (images, labels, sources) in enumerate(progress_bar):
-        images = images.to(device, non_blocking=True)
-        labels = labels.to(device, non_blocking=True).long()
+    for batch_idx, batch  in enumerate(progress_bar):
+        if len(batch) == 3:
+            images, labels, sources = batch 
+        else:
+            images, labels = batch
 
+        images = images.to(device)
+        labels = labels.to(device)
+                
         # forward + loss
         if scaler is not None:
             with autocast(device_type="cuda"):
@@ -373,7 +404,12 @@ def validate_retfound(model, dataloader, criterion, device):
 
     with torch.no_grad():
         pbar = tqdm(dataloader, desc='Validation')
-        for batch_idx, (images, labels, sources) in enumerate(pbar):
+        for batch_idx, batch in enumerate(pbar):
+            if len(batch) == 3:
+                images, labels, _ = batch
+            else:
+                images, labels = batch
+
             images = images.to(device)
             labels = labels.to(device)
 
@@ -403,9 +439,13 @@ def validate_retfound_with_metrics(model, dataloader, criterion, device, num_cla
     y_true, y_pred = [], []
 
     with torch.no_grad():
-        for images, labels, _ in dataloader:
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True).long()
+        for batch in dataloader:
+            if len(batch) == 3:
+                images, labels, _ = batch
+            else:
+                images, labels = batch
+            images = images.to(device)
+            labels = labels.to(device)
 
             outputs = model(images)
             loss = criterion(outputs, labels)
