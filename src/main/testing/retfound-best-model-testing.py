@@ -12,6 +12,7 @@ from timm.models.layers import trunc_normal_
 from torchvision import transforms
 from torch.utils.data import DataLoader
 from torch import nn
+from sklearn.metrics import roc_auc_score
 
 from data_processing.dataset import CombinedDRDataSet
 from utilities.utils import (
@@ -147,7 +148,7 @@ def main():
         persistent_workers=True,
     )
 
-    test_loss, test_acc, precision, recall, f1, qwk = test_retfound(
+    test_loss, test_acc, precision, recall, f1, qwk, per_class_auc, macro_auc, weighted_auc = test_retfound(
         model=model,
         dataloader=test_loader,
         criterion=criterion,
@@ -161,6 +162,14 @@ def main():
     print(f"Recall: {recall:.4f}")
     print(f"F1: {f1:.4f}")
     print(f"QWK: {qwk:.4f}")
+    print("Per-class AUROC:")
+    for c, auc in per_class_auc.items():
+        if auc is None:
+            print(f"{c}: N/A")
+        else:
+            print(f"{c}: {auc:.4f}")
+    print(f"Macro AUC: {macro_auc:.4f}")
+    print(f"Weighted AUC: {weighted_auc:.4f}")
 
     # ==================== SAVE RESULTS ====================
     results = {

@@ -9,7 +9,7 @@ from transformers import Conv1D
 from tqdm import tqdm
 import numpy as np
 from torch.amp import autocast
-from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, cohen_kappa_score, balanced_accuracy_score, classification_report
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, cohen_kappa_score, balanced_accuracy_score, classification_report, roc_auc_score
 import seaborn as sn
 import pandas as pd
 from .plots import generate_confusion_matrix
@@ -481,6 +481,7 @@ def test_retfound(model, dataloader, criterion, device):
 
     all_predictions = []
     all_labels = []
+    all_probabilities = []
 
     with torch.no_grad():
         pbar = tqdm(dataloader, desc='Test Run Progress')
@@ -495,6 +496,8 @@ def test_retfound(model, dataloader, criterion, device):
 
             outputs = model(images)
             loss = criterion(outputs, labels)
+            
+            probabilities = torch.softmax(outputs, dim=1)
 
             running_loss += loss.item()
             _, predicted = outputs.max(1)
@@ -504,6 +507,7 @@ def test_retfound(model, dataloader, criterion, device):
             # storing predictions and labels to calculate metrics
             all_predictions.extend(predicted.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
+            all_probabilities.append(probabilities.cpu().numpy())
 
             pbar.set_postfix({
                 'loss': running_loss / (batch_idx + 1),
@@ -515,6 +519,7 @@ def test_retfound(model, dataloader, criterion, device):
 
     all_predictions = np.array(all_predictions)
     all_labels = np.array(all_labels)
+    all_probabilities = np.concatenate(all_probabilities, axis=0)
 
     precision, recall, f1, quadratic_weighted_kappa = calculate_metrics(all_labels, all_predictions)
     
@@ -525,10 +530,34 @@ def test_retfound(model, dataloader, criterion, device):
             "quadratic_weighted_kappa": quadratic_weighted_kappa
     }
 
+    per_class_auc = {}
+    num_classes = all_probabilities.shape[1]
+
+    for k in range(num_classes):
+        binary_true = (all_labels == k).astype(int)
+        if binary_true.sum() > 0:
+            per_class_auc[f"DR{k}"] = roc_auc_score(binary_true, all_probabilities[:, k])
+        else:
+            per_class_auc[f"DR{k}"] = None
+
+    macro_auc = roc_auc_score(
+        all_labels,
+        all_probabilities,
+        multi_class="ovr",
+        average="macro"
+    )
+
+    weighted_auc = roc_auc_score(
+        all_labels,
+        all_probabilities,
+        multi_class="ovr",
+        average="weighted"
+    )
+
     
     generate_confusion_matrix(all_labels, all_predictions, "results/retfound", "retfound_cf")
 
-    return val_loss, val_acc, precision, recall, f1, quadratic_weighted_kappa
+    return val_loss, val_acc, precision, recall, f1, quadratic_weighted_kappa, per_class_auc, macro_auc, weighted_auc
 
 
 
