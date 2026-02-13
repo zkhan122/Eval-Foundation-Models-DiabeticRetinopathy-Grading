@@ -1,32 +1,38 @@
 {
-    "test_accuracy": 64.29365962180201,
-    "test_loss": 1.0457723860719563,
-    "precision": 0.5486587753140456,
-    "recall": 0.577888744732656,
-    "f1_score": 0.5553489827470873,
-    "quadratic_weighted_kappa": 0.7908162403335919,
-    "training_validation_accuracy": 67.41379310344827,
-    "hyperparameters": {
-        "lora": {
-            "r": 8,
-            "alpha": 32,
-            "dropout": 0.05
-        },
-        "train": {
-            "epochs": 120,
-            "lr_max": 5e-05,
-            "lr_min": 5e-09,
-            "warmup_epochs": 10,
-            "cooldown_epochs": 20,
-            "weight_decay": 0.0005,
-            "betas": [
-                0.9,
-                0.99
-            ],
-            "micro_batch": 8,
-            "grad_accum_steps": 16,
-            "effective_batch": 128
-        }
+    "test_accuracy": 57.605897495904514,
+    "test_loss": 0.9810176174477844,
+    "precision": 0.5026281728528269,
+    "recall": 0.5897733773096461,
+    "f1_score": 0.5088115296915431,
+    "quadratic_weighted_kappa": 0.6531962529750237,
+    "Per-class AUC": [
+        0.8458545964813717,
+        0.6717241438078926,
+        0.8136066462748893,
+        0.9504528564524818,
+        0.9705824285193987
+    ],
+    "macro_auc": 0.8504441343072069,
+    "weighted_auc": 0.8354409496653705,
+    "checkpoint": "best_retfound_model.pth",
+    "lora": {
+        "r": 8,
+        "alpha": 32,
+        "dropout": 0.05
     },
-    "trial_number": null
+    "train": {
+        "epochs": 50,
+        "lr_max": 0.0005,
+        "lr_min": 1e-06,
+        "warmup_epochs": 5,
+        "cooldown_epochs": 10,
+        "weight_decay": 0.0005,
+        "betas": [
+            0.9,
+            0.99
+        ],
+        "micro_batch": 8,
+        "grad_accum_steps": 16,
+        "effective_batch": 128
+    }
 }

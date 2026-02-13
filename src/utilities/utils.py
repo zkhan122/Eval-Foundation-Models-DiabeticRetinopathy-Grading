@@ -1,10 +1,11 @@
 
 from pathlib import Path
 import json
-
+import os
 
 import matplotlib.pyplot as plt
 import torch
+import torch.nn.functional as F
 from transformers import Conv1D
 from tqdm import tqdm
 import numpy as np
@@ -17,6 +18,24 @@ from PIL import Image, ImageFile
 
 # need to allow truncated images such as those in EYEPACS
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+
+
+
+def save_metric_plot(epochs, values, metric_name, save_dir):
+    os.makedirs(save_dir, exist_ok=True)
+
+    plt.figure()
+    plt.plot(epochs, values, marker="o")
+    plt.xlabel("Epoch")
+    plt.ylabel(metric_name)
+    plt.title(f"{metric_name} vs Epoch")
+    plt.grid(True)
+    plt.savefig(os.path.join(save_dir, f"{metric_name.lower().replace(' ', '_')}.png"))
+    plt.close()
+
+
+
 
 
 def _is_image_valid(path: str) -> bool:
@@ -178,7 +197,7 @@ def train_one_epoch_retfound(
 
 
 
-def train_one_epoch_urfound(model, dataloader, criterion, optimizer, device, epoch, scaler):
+def train_one_epoch_urfound(model, dataloader, criterion, optimizer, device, epoch, scaler, grad_accum_steps, max_grad_norm):
     model.train()
     running_loss = 0
     correct = 0
@@ -186,17 +205,25 @@ def train_one_epoch_urfound(model, dataloader, criterion, optimizer, device, epo
 
     progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1} - Training")
 
-    for batch_idx, (images, labels, sources) in enumerate(progress_bar):
+
+    grad_accum_steps = max(1, int(grad_accum_steps))
+
+    for batch_idx, batch  in enumerate(progress_bar):
+        if len(batch) == 3:
+            images, labels, sources = batch
+        else:
+            images, labels = batch
+
         images = images.to(device)
         labels = labels.to(device).long()
 
-        # feed forward pass
         optimizer.zero_grad()
 
         if scaler is not None:
             with autocast(device_type="cuda"):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
+            loss_to_backprop = loss / grad_accum_steps
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -232,7 +259,11 @@ def train_one_epoch_urfound(model, dataloader, criterion, optimizer, device, epo
 
     progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1} - Training")
 
-    for batch_idx, (images, labels, sources) in enumerate(progress_bar):
+    for batch_idx, batch in enumerate(progress_bar):
+        if len(batch) == 3:
+            images, labels, sources = batch
+        else:
+            images, labels = batch
         images = images.to(device)
         labels = labels.to(device).long()
 
@@ -439,6 +470,7 @@ def validate_retfound_with_metrics(model, dataloader, criterion, device, num_cla
     model.eval()
     total_loss = 0.0
     y_true, y_pred = [], []
+    y_probs = []   
 
     with torch.no_grad():
         for batch in dataloader:
@@ -446,6 +478,7 @@ def validate_retfound_with_metrics(model, dataloader, criterion, device, num_cla
                 images, labels, _ = batch
             else:
                 images, labels = batch
+
             images = images.to(device)
             labels = labels.to(device)
 
@@ -453,14 +486,33 @@ def validate_retfound_with_metrics(model, dataloader, criterion, device, num_cla
             loss = criterion(outputs, labels)
             total_loss += loss.item()
 
+            probs = F.softmax(outputs, dim=1)  # convert logits → probabilities
             preds = outputs.argmax(dim=1)
+
             y_true.extend(labels.detach().cpu().tolist())
             y_pred.extend(preds.detach().cpu().tolist())
+            y_probs.extend(probs.detach().cpu().numpy())
 
     val_loss = total_loss / len(dataloader)
-    acc = 100.0 * (np.array(y_true) == np.array(y_pred)).mean()
+
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    y_probs = np.array(y_probs)
+
+    acc = 100.0 * (y_true == y_pred).mean()
     bal_acc = 100.0 * balanced_accuracy_score(y_true, y_pred)
     macro_f1 = 100.0 * f1_score(y_true, y_pred, average="macro")
+
+    try:
+        macro_auc = roc_auc_score(
+            y_true,
+            y_probs,
+            multi_class="ovr",   # one-vs-rest (standard for medical papers)
+            average="macro"
+        )
+        macro_auc *= 100.0
+    except ValueError:
+        macro_auc = 0.0  # if class is missing in batch
 
     report = classification_report(
         y_true, y_pred,
@@ -469,7 +521,7 @@ def validate_retfound_with_metrics(model, dataloader, criterion, device, num_cla
         zero_division=0
     )
 
-    return val_loss, acc, bal_acc, macro_f1, report
+    return val_loss, acc, bal_acc, macro_f1, macro_auc, report
 
 
 def test_retfound(model, dataloader, criterion, device):
@@ -597,11 +649,66 @@ def validate_urfound(model, dataloader, criterion, device):
     return val_loss, val_acc
 
 
+def validate_urfound_with_metrics(model, dataloader, criterion, device, num_classes: int):
+    model.eval()
+    total_loss = 0.0
+    y_true, y_pred, y_probs = [], [], []
+
+    with torch.no_grad():
+        for batch in dataloader:
+            if len(batch) == 3:
+                images, labels, _ = batch
+            else:
+                images, labels = batch
+
+            images = images.to(device)
+            labels = labels.to(device)
+
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            total_loss += loss.item()
+
+            probs = F.softmax(outputs, dim=1)
+            preds = outputs.argmax(dim=1)
+
+            y_true.extend(labels.detach().cpu().tolist())
+            y_pred.extend(preds.detach().cpu().tolist())
+            y_probs.extend(probs.detach().cpu().numpy())
+
+    val_loss = total_loss / len(dataloader)
+
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    y_probs = np.array(y_probs)
+
+    acc = 100.0 * (y_true == y_pred).mean()
+    bal_acc = 100.0 * balanced_accuracy_score(y_true, y_pred)
+    macro_f1 = 100.0 * f1_score(y_true, y_pred, average="macro")
+
+    report = classification_report(
+        y_true,
+        y_pred,
+        labels=list(range(num_classes)),
+        digits=4,
+        zero_division=0
+    )
+
+    try:
+        macro_auc = roc_auc_score(
+            y_true,
+            y_probs,
+            multi_class="ovr",
+            average="macro"
+        )
+        macro_auc *= 100.0
+    except ValueError:
+        macro_auc = float("nan")
+
+    return val_loss, acc, bal_acc, macro_f1, macro_auc, report
+
+
 def test_urfound(model, dataloader, criterion, device):
 
-    # calculating metrics
-
-    """Validate the model"""
     model.eval()
     running_loss = 0.0
     correct = 0
@@ -609,10 +716,18 @@ def test_urfound(model, dataloader, criterion, device):
 
     all_predictions = []
     all_labels = []
+    all_probs = []
 
     with torch.no_grad():
-        pbar = tqdm(dataloader, desc='Validation')
-        for batch_idx, (images, labels, sources) in enumerate(pbar):
+        pbar = tqdm(dataloader, desc="Validation")
+
+        for batch_idx, batch in enumerate(pbar):
+
+            if len(batch) == 3:
+                images, labels, _ = batch
+            else:
+                images, labels = batch
+
             images = images.to(device)
             labels = labels.to(device)
 
@@ -620,38 +735,86 @@ def test_urfound(model, dataloader, criterion, device):
             loss = criterion(outputs, labels)
 
             running_loss += loss.item()
+
+            probs = torch.softmax(outputs, dim=1)
             _, predicted = outputs.max(1)
+
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
 
-
             all_predictions.extend(predicted.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
+            all_probs.extend(probs.cpu().numpy())
 
             pbar.set_postfix({
-                'loss': running_loss / (batch_idx + 1),
-                'acc': 100. * correct / total
+                "loss": running_loss / (batch_idx + 1),
+                "acc": 100.0 * correct / total
             })
 
     val_loss = running_loss / len(dataloader)
-    val_acc = 100. * correct / total
+    val_acc = 100.0 * correct / total
 
     all_predictions = np.array(all_predictions)
     all_labels = np.array(all_labels)
+    all_probs = np.array(all_probs)
 
-    precision, recall, f1, quadratic_weighted_kappa = calculate_metrics(all_labels, all_predictions)
-    
-    metrics = {
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "quadratic_weighted_kappa": quadratic_weighted_kappa
-    }
+    precision, recall, f1, qwk = calculate_metrics(
+        all_labels,
+        all_predictions
+    )
 
+    generate_confusion_matrix(
+        all_labels,
+        all_predictions,
+        "results/urfound",
+        "urfound_cf"
+    )
 
-    generate_confusion_matrix(all_labels, all_predictions, "results/urfound", "urfound_cf")
+    # --------- AUROC ---------
+    num_classes = all_probs.shape[1]
+    per_class_auc = {}
 
-    return val_loss, val_acc, precision, recall, f1, quadratic_weighted_kappa
+    for i in range(num_classes):
+        try:
+            auc = roc_auc_score(
+                (all_labels == i).astype(int),
+                all_probs[:, i]
+            )
+            per_class_auc[f"DR{i}"] = auc
+        except ValueError:
+            per_class_auc[f"DR{i}"] = None
+
+    try:
+        macro_auc = roc_auc_score(
+            all_labels,
+            all_probs,
+            multi_class="ovr",
+            average="macro"
+        )
+    except ValueError:
+        macro_auc = float("nan")
+
+    try:
+        weighted_auc = roc_auc_score(
+            all_labels,
+            all_probs,
+            multi_class="ovr",
+            average="weighted"
+        )
+    except ValueError:
+        weighted_auc = float("nan")
+
+    return (
+        val_loss,
+        val_acc,
+        precision,
+        recall,
+        f1,
+        qwk,
+        per_class_auc,
+        macro_auc,
+        weighted_auc
+    )
 
 
 

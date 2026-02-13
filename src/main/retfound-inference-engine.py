@@ -22,7 +22,8 @@ from utilities.utils import (
     train_one_epoch_retfound,
     validate_retfound,
     validate_retfound_with_metrics,
-    subsample_dataset
+    subsample_dataset,
+    save_metric_plot
 )
 from peft import get_peft_model, LoraConfig
 from torch.cuda.amp import GradScaler
@@ -79,9 +80,6 @@ print(f"Micro batch: {MICRO_BATCH_SIZE} | Effective batch: {MICRO_BATCH_SIZE * G
       f"| Grad accum steps: {GRAD_ACCUM_STEPS}")
 
 
-# -------------------------
-# Reproducibility (helps a lot when debugging)
-# -------------------------
 def seed_everything(seed: int):
     random.seed(seed)
     np.random.seed(seed)
@@ -144,15 +142,11 @@ def create_balanced_sampler(dataset, num_classes=NUM_CLASSES):
     """
     labels = np.array(dataset.labels, dtype=np.int64)
     
-    # Calculate class counts
     class_counts = np.bincount(labels, minlength=num_classes)
     
-    # Calculate weights for each class (inverse frequency)
     class_weights = class_balanced_weights(class_counts, beta=0.9999, device=DEVICE) 
-    # Assign weight to each sample based on its class
     sample_weights = class_weights[labels]
     
-    # Create sampler
     sampler = WeightedRandomSampler(
         weights=sample_weights,
         num_samples=len(sample_weights),
@@ -245,10 +239,9 @@ def main():
         print(f"Class {i}: {count:5d} samples ({count/len(labels)*100:.1f}%)")
     print(f"{'='*60}\n")
 
-    # Calculate class weights with capping
     class_weights_np = len(labels) / (NUM_CLASSES * class_counts.astype(float))
     
-    # IMPORTANT: Cap weights to prevent extreme values that cause model collapse
+    # note: need to cap weights to prevent extreme values that cause model collapse
     max_weight = 12.0
     class_weights_np = np.clip(class_weights_np, None, max_weight)
     class_weights_np = class_weights_np / class_weights_np.sum() * NUM_CLASSES  # Re-normalize
@@ -260,7 +253,6 @@ def main():
         print(f"Class {i}: {weight:.4f}")
     print()
 
-    # Visualize distribution
     classes = list(range(NUM_CLASSES))
     counts = class_counts.tolist()
 
@@ -282,17 +274,12 @@ def main():
     plt.savefig("../train_class_distribution_and_weights.jpg")
     plt.close()
 
-    # ==================== CREATE BALANCED SAMPLER ====================
     print("\n" + "="*60)
     print("CREATING BALANCED SAMPLER FOR TRAINING")
     print("="*60)
     
-    
-
     print("="*60 + "\n")
-    # =================================================================
-
-    # ==================== OPTIMIZED DATALOADERS ====================
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=MICRO_BATCH_SIZE,
@@ -312,7 +299,6 @@ def main():
         persistent_workers=True,
         prefetch_factor=2  # Less prefetching for validation
     )
-    # ===============================================================
 
     # Model + RETFound weights
     model = models_vit.__dict__["vit_large_patch16"](
@@ -347,20 +333,16 @@ def main():
     model = get_peft_model(model, peft_config)
     model = model.to(DEVICE)
 
-    # ==================== LOSS FUNCTION ====================
-    # OPTION 1: Focal Loss (recommended for imbalanced data)
     
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
-    # OPTION 2: CrossEntropyLoss with label smoothing (if Focal Loss doesn't work)
     # criterion = nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
     
     print(f"\n{'='*60}")
     print(f"Using Focal Loss with gamma=2.0 and class weights")
     print(f"{'='*60}\n")
-    # =======================================================
 
-    # Optimizer (paper-ish)
+    # Optimizer (paper)
     optimizer = torch.optim.AdamW(
         make_param_groups(model, WEIGHT_DECAY),
         lr=LR_MAX,
@@ -370,7 +352,7 @@ def main():
     scaler = GradScaler()  
 
     best_val_acc = 0.0
-    best_val_bal_acc = 0.0  # Track balanced accuracy too
+    best_val_bal_acc = 0.0  # need to track val balanced accuracy too
     best_state = None
 
     print(f"\n{'='*60}")
@@ -383,8 +365,14 @@ def main():
     print(f"Validation samples: {len(validation_dataset)}")
     print(f"{'='*60}\n")
 
+    history_epochs = []
+    history_acc = []
+    history_bal_acc = []
+    history_macro_f1 = []
+    history_macro_auc = []
+
+
     for epoch in range(NUM_EPOCHS):
-        # set epoch LR per paper schedule
         lr = lr_at_epoch(epoch)
         for pg in optimizer.param_groups:
             pg["lr"] = lr
@@ -401,32 +389,44 @@ def main():
             max_grad_norm=MAX_GRAD_NORM,
         )
 
-        # Validate less frequently in early epochs to speed up training
-        if epoch < 20 and (epoch+1) % 5 != 0:
-            # Skip validation for first 20 epochs except every 5th
+        if (epoch + 1) % 10 != 0:
             print(f"Epoch {epoch+1:03d}/{NUM_EPOCHS} | "
                   f"lr={lr:.2e} | "
                   f"train_loss={train_loss:.4f} train_acc={train_acc:.2f}% | "
                   f"[Skipping validation]")
             continue
 
-        val_loss, val_acc, val_bal_acc, val_macro_f1, report = validate_retfound_with_metrics(
+        val_loss, val_acc, val_bal_acc, val_macro_f1, val_macro_auc, report = validate_retfound_with_metrics(
             model, validation_loader, criterion, DEVICE, NUM_CLASSES
         )
+        
+        history_epochs.append(epoch + 1)
+        history_acc.append(val_acc)
+        history_bal_acc.append(val_bal_acc)
+        history_macro_f1.append(val_macro_f1)
+        history_macro_auc.append(val_macro_auc)
+
 
         print(f"Epoch {epoch+1:03d}/{NUM_EPOCHS} | "
               f"lr={lr:.2e} | "
               f"train_loss={train_loss:.4f} train_acc={train_acc:.2f}%")
 
-        print(f"val_acc={val_acc:.2f}% | bal_acc={val_bal_acc:.2f}% | macro_f1={val_macro_f1:.2f}%")
+        print(f"val_acc={val_acc:.2f}% | bal_acc={val_bal_acc:.2f}% | macro_f1={val_macro_f1:.2f}% | macro_auc={val_macro_auc:.2f}%")
         print(report)
         
-        # Save best model based on BALANCED accuracy (better metric for imbalanced data)
         if val_bal_acc > best_val_bal_acc:
             best_val_bal_acc = val_bal_acc
             best_val_acc = val_acc
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             print(f"★ New best balanced accuracy: {best_val_bal_acc:.2f}% (acc: {best_val_acc:.2f}%)")
+    
+    plot_save_dir = "./plots/retfound"
+    save_metric_plot(history_epochs, history_acc, "Validation Accuracy", plot_save_dir)
+    save_metric_plot(history_epochs, history_bal_acc, "Balanced Accuracy", plot_save_dir)
+    save_metric_plot(history_epochs, history_macro_f1, "Macro F1", plot_save_dir)
+    save_metric_plot(history_epochs, history_macro_auc, "Macro AUROC", plot_save_dir)
+
+
 
     os.makedirs("../best_models", exist_ok=True)
     save_path = "../best_models/best_retfound_model.pth"

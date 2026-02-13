@@ -1,3 +1,4 @@
+import time
 import sys
 import os
 import json
@@ -170,6 +171,10 @@ def main():
             print(f"{c}: {auc:.4f}")
     print(f"Macro AUC: {macro_auc:.4f}")
     print(f"Weighted AUC: {weighted_auc:.4f}")
+    
+    
+    per_class_auc_list = [per_class_auc[f"DR{i}"] for i in range(len(per_class_auc)) if per_class_auc[f"DR{i}"] is not None]
+
 
     # ==================== SAVE RESULTS ====================
     results = {
@@ -179,6 +184,9 @@ def main():
         "recall": float(recall),
         "f1_score": float(f1),
         "quadratic_weighted_kappa": float(qwk),
+        "Per-class AUC": per_class_auc_list,
+        "macro_auc": float(macro_auc),
+        "weighted_auc": float(weighted_auc),
         "checkpoint": os.path.basename(best_path),
         "lora": lora_cfg,
         "train": train_cfg,
@@ -186,6 +194,11 @@ def main():
 
     os.makedirs("results/retfound", exist_ok=True)
     results_path = "results/retfound/retfound_test_results.json"
+    
+    if os.path.exists(results_path):
+        os.remove(results_path)
+        print("Existing JSON removed")
+        time.sleep(3)
 
     with open(results_path, "w") as f:
         json.dump(results, f, indent=4)
