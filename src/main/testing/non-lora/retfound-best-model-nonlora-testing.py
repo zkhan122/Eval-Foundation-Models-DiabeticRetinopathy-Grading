@@ -5,7 +5,7 @@ import json
 import torch
 import numpy as np
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
 from models.RETFound_MAE import models_vit
 from models.RETFound_MAE.util import pos_embed
@@ -21,7 +21,6 @@ from utilities.utils import (
     test_retfound,
     json_to_csv,
 )
-from peft import get_peft_model, LoraConfig
 
 
 # -------------------------
@@ -31,23 +30,24 @@ NUM_CLASSES = 5
 NUM_WORKERS = 4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-DATA_DIR = "../../../datasets"
-SRC_DIR = "../../"
+DATA_DIR = "../../../../datasets"
+SRC_DIR = "../../../"
 
 
 # -------------------------
 # Backbone loader (identical logic to training)
 # -------------------------
 def load_retfound_backbone(model):
-    checkpoint_path = f"{SRC_DIR}/models/RETFound_MAE/weights/RETFound_cfp_weights.pth"
+    checkpoint_path = f"{SRC_DIR}/best_models/best_retfound_nonlora_model.pth"
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
-    checkpoint_model = checkpoint["model"]
+    checkpoint_model = checkpoint["model_state_dict"]
     state_dict = model.state_dict()
 
     for k in ["head.weight", "head.bias"]:
-        if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
-            del checkpoint_model[k]
+        if k in checkpoint_model and k in state_dict:
+            if checkpoint_model[k].shape != state_dict[k].shape:
+                del checkpoint_model[k]
 
     pos_embed.interpolate_pos_embed(model, checkpoint_model)
     model.load_state_dict(checkpoint_model, strict=False)
@@ -94,20 +94,15 @@ def main():
     print(f"Test samples after pruning: {len(test_dataset)}")
 
     # ==================== LOAD CHECKPOINT ====================
-    best_path = f"{SRC_DIR}/best_models/best_retfound_model.pth"
+    best_path = f"{SRC_DIR}/best_models/best_retfound_nonlora_model.pth"
     checkpoint = torch.load(best_path, map_location="cpu", weights_only=False)
 
     # Unified checkpoint parsing (training-compatible)
-    lora_cfg = checkpoint.get("lora", {"r": 8, "alpha": 32, "dropout": 0.05})
     train_cfg = checkpoint.get("train", {})
     batch_size = train_cfg.get("micro_batch", 8)
 
     print("\nLoaded checkpoint configuration:")
     print(f"  Batch size: {batch_size}")
-    print(f"  LoRA r: {lora_cfg['r']}")
-    print(f"  LoRA alpha: {lora_cfg['alpha']}")
-    print(f"  LoRA dropout: {lora_cfg['dropout']}")
-
     # ==================== MODEL ====================
     model = models_vit.__dict__["vit_large_patch16"](
         num_classes=NUM_CLASSES,
@@ -117,16 +112,7 @@ def main():
 
     model = load_retfound_backbone(model)
 
-    peft_config = LoraConfig(
-        r=lora_cfg["r"],
-        lora_alpha=lora_cfg["alpha"],
-        lora_dropout=lora_cfg["dropout"],
-        target_modules=["qkv", "proj"],
-        bias="none",
-        modules_to_save=["head"],
-    )
 
-    model = get_peft_model(model, peft_config)
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     model = model.to(DEVICE)
     model.eval()
@@ -188,12 +174,15 @@ def main():
         "macro_auc": float(macro_auc),
         "weighted_auc": float(weighted_auc),
         "checkpoint": os.path.basename(best_path),
-        "lora": lora_cfg,
         "train": train_cfg,
     }
 
-    os.makedirs("results/retfound", exist_ok=True)
-    results_path = "results/retfound/retfound_test_results.json"
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    results_dir = os.path.join(BASE_DIR, "results", "retfound")
+
+    os.makedirs(results_dir, exist_ok=True)
+
+    results_path = os.path.join(results_dir, "retfound_nonlora_test_results.json")
     
     if os.path.exists(results_path):
         os.remove(results_path)
@@ -203,7 +192,7 @@ def main():
     with open(results_path, "w") as f:
         json.dump(results, f, indent=4)
 
-    json_to_csv(results_path, "results/retfound", "retfound_results")
+    json_to_csv(results_path, "results/retfound", "retfound_nonlora_test_results")
 
     print(f"\nResults saved to: {results_path}")
     print("=" * 70)

@@ -1,0 +1,33 @@
+{
+    "test_accuracy": 60.81207582494734,
+    "test_loss": 0.9580535870550725,
+    "precision": 0.49705420927596433,
+    "recall": 0.5719245792488332,
+    "f1_score": 0.5065626079849205,
+    "quadratic_weighted_kappa": 0.6249270018545654,
+    "Per-class AUC": [
+        0.8284329254970506,
+        0.667143228434355,
+        0.8003043566196743,
+        0.9472448245802666,
+        0.9699342439770224
+    ],
+    "macro_auc": 0.8426119158216739,
+    "weighted_auc": 0.8205681949672149,
+    "checkpoint": "best_retfound_nonlora_model.pth",
+    "train": {
+        "epochs": 50,
+        "lr_max": 0.0002,
+        "lr_min": 1e-06,
+        "warmup_epochs": 5,
+        "cooldown_epochs": 10,
+        "weight_decay": 0.0005,
+        "betas": [
+            0.9,
+            0.99
+        ],
+        "micro_batch": 8,
+        "grad_accum_steps": 16,
+        "effective_batch": 128
+    }
+}

@@ -24,7 +24,10 @@ class CLIPRetina(nn.Module):
         super().__init__()
         self.vision = CLIPVisionModelWithProjection.from_pretrained(model_name)
         embedding_dim = self.vision.config.projection_dim
-        self.classifier = nn.Linear(embedding_dim, num_classes)
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(embedding_dim, num_classes)
+        )
 
     def forward(self, images):
         outputs = self.vision(pixel_values=images)
@@ -105,6 +108,9 @@ def main():
         "DDR": f"{DATA_DIR}/DDR",
     }
     val_root_directories = dict(train_root_directories)
+    
+    CLIP_MEAN = [0.48145466, 0.4578275, 0.40821073]
+    CLIP_STD  = [0.26862954, 0.26130258, 0.27577711]
 
     train_transformations = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -113,13 +119,13 @@ def main():
         transforms.RandomRotation(15),
         transforms.ColorJitter(brightness=0.2, contrast=0.2),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        transforms.Normalize(mean=CLIP_MEAN, std=CLIP_STD),
     ])
 
     validation_transformations = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        transforms.Normalize(mean=CLIP_MEAN, std=CLIP_STD),
     ])
 
     train_dataset = CombinedDRDataSet(
@@ -239,17 +245,51 @@ def main():
 
     model = model.to(DEVICE)
 
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print("Applying hybrid fine-tuning...")
 
-    print(f"\nTotal parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
+    UNFREEZE_LAST_N = 6  # tweal
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    # freezing everything
+    for p in model.parameters():
+        p.requires_grad = False
+
+    for p in model.classifier.parameters():
+        p.requires_grad = True
+
+    vision_encoder = model.vision.vision_model.encoder.layers
+    total_blocks = len(vision_encoder)
+
+    for block in vision_encoder[total_blocks - UNFREEZE_LAST_N:]:
+        for p in block.parameters():
+            p.requires_grad = True
+
+    for name, p in model.named_parameters():
+        if "layernorm" in name.lower() or "ln" in name.lower():
+            p.requires_grad = True
+
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    print(f"Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.2f}%)")
+
+
+    criterion = nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
+
+    backbone_params = []
+    head_params = []
+
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if "classifier" in name:
+            head_params.append(p)
+        else:
+            backbone_params.append(p)
 
     optimizer = torch.optim.AdamW(
-        make_param_groups(model, WEIGHT_DECAY),
-        lr=LR_MAX,
+        [
+            {"params": backbone_params, "lr": LR_MAX * 0.1, "weight_decay": WEIGHT_DECAY},
+            {"params": head_params, "lr": LR_MAX, "weight_decay": WEIGHT_DECAY},
+        ],
         betas=BETAS
     )
 
@@ -267,9 +307,12 @@ def main():
 
     for epoch in range(NUM_EPOCHS):
         lr = lr_at_epoch(epoch)
-        for pg in optimizer.param_groups:
+        for i, pg in enumerate(optimizer.param_groups):
+            if i == 0:
+                pg["lr"] = lr * 0.1
+        else:
             pg["lr"] = lr
-
+        
         train_loss, train_acc = train_one_epoch_clip(
             model=model,
             dataloader=train_loader,

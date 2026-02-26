@@ -1,0 +1,34 @@
+{
+    "test_accuracy": 56.9740229347063,
+    "test_loss": 1.3411697621123606,
+    "precision": 0.479552494557991,
+    "recall": 0.5756087367388607,
+    "f1_score": 0.49504869524741874,
+    "quadratic_weighted_kappa": 0.621878514582463,
+    "Per-class AUC": [
+        0.8041292448266175,
+        0.6482768574618026,
+        0.7527158619505139,
+        0.8266645393859096,
+        0.8759930115068532
+    ],
+    "macro_auc": 0.7815559030263393,
+    "weighted_auc": 0.7875459302881851,
+    "training_validation_accuracy": 58.257294356356205,
+    "checkpoint": "best_clip_nonlora_model.pth",
+    "train": {
+        "epochs": 50,
+        "lr_max": 0.0005,
+        "lr_min": 1e-06,
+        "warmup_epochs": 5,
+        "cooldown_epochs": 10,
+        "weight_decay": 0.0005,
+        "betas": [
+            0.9,
+            0.99
+        ],
+        "micro_batch": 8,
+        "grad_accum_steps": 16,
+        "effective_batch": 128
+    }
+}
