@@ -3,51 +3,59 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import json
 import pandas as pd
+import time
+import numpy as np
 
 
+def load_auc_data(json_path):
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+    return data["Per-class AUC"]
 
-def class_auc_collated(json_buffer, class_names, output_dir, MODE):
-
-    def load_auc(path):
-        with open(path, "r") as f:
-            data = json.load(f)
-        return data["Per-class AUC"]
-
-    def get_model_name(path):
-        return os.path.basename(os.path.dirname(path))
-
-    results = {}
-    for path in json_buffer:
-        model = get_model_name(path)
-        results[model] = load_auc(path)
-
-    num_classes = len(next(iter(results.values())))
-
-    if class_names is None:
-        class_names = [f"Class {i}" for i in range(num_classes)]
-
-    for class_idx in range(num_classes):
-
-        models = []
-        auc_values = []
-
-        for model in sorted(results.keys()):
-            models.append(model)
-            auc_values.append(results[model][class_idx])
-
-        plt.figure()
-        plt.bar(models, auc_values)
-        plt.ylim(0, 1)
-        plt.ylabel("AUC")
-        plt.title(f"{class_names[class_idx]} - {MODE} AUC")
-        plt.tight_layout()
-        save_path = os.path.join(
-            output_dir,
-            f"class_{class_idx}_{MODE.lower()}_auc.png"
-        )
-
-        plt.savefig(save_path, dpi=300)
-        plt.close()
+def class_auc_collated(json_paths, class_names, output_dir, MODE):
+    
+    if os.path.exists(output_dir):
+        for file in os.listdir(output_dir):
+            if file.endswith(".png") or file.endswith(".jpg") or file.endswith(".jpeg"):
+                os.remove(os.path.join(output_dir, file))
+                print(f"Removed: {file}")
+    time.sleep(3)
+    model_aucs = {}
+    for path, name in zip(json_paths, class_names):
+        model_aucs[name] = load_auc_data(path)
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    x = np.arange(len(class_names))  # class positions
+    width = 0.25  # bar width
+    
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # blue, orange, green
+    
+    # bars for each model
+    for i, (model, color) in enumerate(zip(class_names, colors)):
+        offset = (i - 1) * width  # -0.25, 0, 0.25
+        bars = ax.bar(x + offset, model_aucs[model], width, 
+                     label=model, color=color, edgecolor='black')
+        bars.set_label(model) 
+        # value labels
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                   f'{height:.3f}', ha='center', va='bottom', fontsize=8)
+    
+    ax.set_ylabel('AUC-ROC Score')
+    ax.set_xlabel('Diabetic Retinopathy Severity')
+    ax.set_title(f"{MODE} Tuned Models - AUC Comparison")
+    ax.set_xticks(x)
+    ax.set_xticklabels(class_names, rotation=45, ha='right')
+    ax.set_ylim([0.5, 1.0])
+    ax.legend()
+    ax.grid(True, axis='y', alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(output_dir, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_dir}")
 
 
 if __name__ == "__main__":
@@ -56,11 +64,12 @@ if __name__ == "__main__":
     DR_LORA_TEST_RESULTS_DIR = "./testing/lora-based/results"
 
     lora_jsons = [
-        f"{DR_LORA_TEST_RESULTS_DIR}/retfound/retfound_test_results.json",
-        f"{DR_LORA_TEST_RESULTS_DIR}/urfound/urfound_test_results.json",
+      f"{DR_LORA_TEST_RESULTS_DIR}/retfound/retfound_test_results.json",
+       f"{DR_LORA_TEST_RESULTS_DIR}/urfound/urfound_test_results.json",
         f"{DR_LORA_TEST_RESULTS_DIR}/clip/clip_test_results.json"]
+    
 
-
+    
     non_lora_jsons = [
         f"{DR_NONLORA_TEST_RESULTS_DIR}/retfound/retfound_nonlora_test_results.json",
         f"{DR_NONLORA_TEST_RESULTS_DIR}/urfound/urfound_nonlora_test_results.json",
