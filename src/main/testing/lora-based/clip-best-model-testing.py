@@ -3,7 +3,7 @@ import os
 import json
 import torch
 import optuna
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 from transformers import CLIPVisionModelWithProjection, CLIPProcessor
 from timm.models.layers import trunc_normal_
 import torchvision
@@ -51,9 +51,8 @@ LORA_DROPOUT = 0.05
 MICRO_BATCH_SIZE = 8
 
 
-DATA_DIR = "../../../datasets"
-SRC_DIR = "../../"
-
+DATA_DIR = "../../../../datasets"
+SRC_DIR = "../../../../"
 
 test_root_directories = {
     "DEEPDRID": f"{DATA_DIR}/DeepDRiD",
@@ -92,7 +91,7 @@ test_dataset.load_labels_from_csv_for_test(test_csv_paths)
 test_dataset.prune_unlabeled()
 
 # note to self: THIS IS THE MODEL (during testing phase we only load weights)
-checkpoint_path = f"{SRC_DIR}/best_models/best_clip_model.pth"
+checkpoint_path = f"../../../best_models/best_clip_model.pth"
 checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
 
@@ -197,9 +196,12 @@ criterion = nn.CrossEntropyLoss()
 test_loader = DataLoader(test_dataset, batch_size=MICRO_BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
 
 
+class_names = ["No DR", "Mild", "Moderate", "Severe", "Proliferative DR"]
+
+roc_save_path = os.path.join("./results/clip", "clip_lora_roc_data.json")
+
 test_loss, test_acc, precision, recall, f1, qwk, per_class_auc, macro_auc, weighted_auc = test_clip(
-    model, test_loader, criterion, DEVICE
-)
+    model, test_loader, criterion, DEVICE, class_names, roc_save_path)
 
 
 print("\nFINAL TEST RESULTS")

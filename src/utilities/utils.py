@@ -10,7 +10,7 @@ from transformers import Conv1D
 from tqdm import tqdm
 import numpy as np
 from torch.amp import autocast
-from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, cohen_kappa_score, balanced_accuracy_score, classification_report, roc_auc_score
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, cohen_kappa_score, balanced_accuracy_score, classification_report, roc_auc_score, roc_curve
 import seaborn as sn
 import pandas as pd
 from .plots import generate_confusion_matrix
@@ -119,6 +119,45 @@ def calculate_metrics(labels, predictions):
     quadratic_weighted_kappa = cohen_kappa_score(labels, predictions, weights="quadratic")
 
     return precision, recall, f1, quadratic_weighted_kappa
+
+
+def save_roc_curve_data(all_labels, all_probs, class_names, save_path):
+    if class_names is None:
+        class_names = [f"Class {i}" for i in range(all_probs.shape[1])]
+
+    roc_data = {}
+
+    for i, class_name in enumerate(class_names):
+        y_true_binary = (all_labels == i).astype(int)
+        y_score = all_probs[:, i]
+        
+        # calculating ROC curve
+        fpr, tpr, thresholds = roc_curve(y_true_binary, y_score)
+        
+        # sample points at specific FPR values 
+        target_fprs = [0.05, 0.10, 0.15, 0.20, 0.25]  
+        sampled_tprs = []
+        
+        for target_fpr in target_fprs:
+            idx = np.argmin(np.abs(fpr - target_fpr))
+            sampled_tprs.append(float(tpr[idx]))
+        
+        roc_data[class_name] = {
+            "fpr": fpr.tolist(),
+            "tpr": tpr.tolist(),
+            "thresholds": thresholds.tolist(),
+            "sampled_points": {
+                "fpr_values": target_fprs,
+                "tpr_values": sampled_tprs
+            }
+        }
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
+    with open(save_path, 'w') as f:
+        json.dump(roc_data, f, indent=2)
+    
+    print(f"ROC curve data saved to: {save_path}")
 
 
 def train_one_epoch_retfound(
@@ -469,7 +508,7 @@ def validate_clip_with_metrics(model, dataloader, criterion, device, num_classes
     return val_loss, acc, bal_acc, macro_f1, macro_auc, report
 
 
-def test_clip(model, dataloader, criterion, device):
+def test_clip(model, dataloader, criterion, device, class_names, save_roc_path):
 
     model.eval()
     running_loss = 0.0
@@ -532,7 +571,7 @@ def test_clip(model, dataloader, criterion, device):
         "clip_cf"
     )
 
-    # --------- AUROC ---------
+    # AUROC
     num_classes = all_probs.shape[1]
     per_class_auc = {}
 
@@ -565,6 +604,10 @@ def test_clip(model, dataloader, criterion, device):
         )
     except ValueError:
         weighted_auc = float("nan")
+    
+    
+    if save_roc_path is not None:
+        save_roc_curve_data(all_labels, all_probs, class_names, save_roc_path)
 
     return (
         val_loss,

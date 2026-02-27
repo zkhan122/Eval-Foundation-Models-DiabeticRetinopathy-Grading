@@ -6,13 +6,12 @@ import pandas as pd
 import time
 import numpy as np
 
-
 def load_auc_data(json_path):
     with open(json_path, 'r') as f:
         data = json.load(f)
     return data["Per-class AUC"]
 
-def class_auc_collated(json_paths, class_names, output_dir, MODE):
+def class_auc_collated(json_paths, model_names, class_names, output_dir, MODE):
     
     if os.path.exists(output_dir):
         for file in os.listdir(output_dir):
@@ -21,22 +20,26 @@ def class_auc_collated(json_paths, class_names, output_dir, MODE):
                 print(f"Removed: {file}")
     time.sleep(3)
     model_aucs = {}
-    for path, name in zip(json_paths, class_names):
-        model_aucs[name] = load_auc_data(path)
+    for path, model_name in zip(json_paths, model_names):
+        model_aucs[model_name] = load_auc_data(path)
     
     fig, ax = plt.subplots(figsize=(12, 6))
     
     x = np.arange(len(class_names))  # class positions
     width = 0.25  # bar width
     
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # blue, orange, green
+    color_map = {
+        'CLIP': '#2ca02c',      # green
+        'RETFound': '#1f77b4',  # blue
+        'UrFound': '#ff7f0e'    # orange
+    } 
     
     # bars for each model
-    for i, (model, color) in enumerate(zip(class_names, colors)):
+    for i, model_name in enumerate(model_names):
+        color = color_map[model_name]
         offset = (i - 1) * width  # -0.25, 0, 0.25
-        bars = ax.bar(x + offset, model_aucs[model], width, 
-                     label=model, color=color, edgecolor='black')
-        bars.set_label(model) 
+        bars = ax.bar(x + offset, model_aucs[model_name], width, 
+                     label=model_name, color=color, edgecolor='black')
         # value labels
         for bar in bars:
             height = bar.get_height()
@@ -93,6 +96,8 @@ if __name__ == "__main__":
     "Proliferative DR"
     ]
 
-    class_auc_collated(non_lora_jsons, dr_classes, "../plots/nonlora-final-plots", "NON-LORA")
+    model_names = ["RETFound", "UrFound", "CLIP"]
+
+    class_auc_collated(non_lora_jsons, model_names, dr_classes, "../plots/nonlora-final-plots", "NON-LORA")
     
-    class_auc_collated(lora_jsons, dr_classes, "../plots/lora-final-plots", "LORA")
+    class_auc_collated(lora_jsons, model_names, dr_classes, "../plots/lora-final-plots", "LORA")
