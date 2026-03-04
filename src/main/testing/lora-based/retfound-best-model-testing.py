@@ -23,7 +23,6 @@ from utilities.utils import (
 )
 from peft import get_peft_model, LoraConfig
 
-
 # -------------------------
 # Minimal, training-aligned hparams
 # -------------------------
@@ -34,6 +33,30 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DATA_DIR = "../../../../datasets"
 SRC_DIR = "../../../"
 
+PUBLICATION_RC = {
+    'font.family':       'serif',
+    'font.serif':        ['Times New Roman', 'DejaVu Serif'],
+    'axes.labelsize':    13,
+    'axes.titlesize':    14,
+    'xtick.labelsize':   11,
+    'ytick.labelsize':   11,
+    'legend.fontsize':   11,
+    'figure.dpi':        150,
+    'axes.spines.top':   False,
+    'axes.spines.right': False,
+    'axes.linewidth':    0.8,
+    'xtick.direction':   'out',
+    'ytick.direction':   'out',
+}
+
+# colour used for all benchmark lines
+BENCH_COLOR   = '#4c72b0'
+MEAN_COLOR    = '#c0392b'   # red for mean reference line
+BAND_COLOR    = '#4c72b0'   # +- std
+
+
+def _apply_rc():
+    plt.rcParams.update(PUBLICATION_RC)
 
 # -------------------------
 # Backbone loader (identical logic to training)

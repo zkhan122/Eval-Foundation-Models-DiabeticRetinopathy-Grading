@@ -4,6 +4,9 @@ import json
 import os
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import matplotlib.patches as mpatches
+from matplotlib.gridspec import GridSpec
 import torch
 import torch.nn.functional as F
 from transformers import Conv1D
@@ -1065,3 +1068,337 @@ def json_to_csv(json_path, save_path, filename):
 
     df = pd.json_normalize(data)
     df.to_csv(f"{save_path}/{filename}.csv", index=False, encoding="utf-8")
+
+PUBLICATION_RC = {
+    'font.family':       'serif',
+    'font.serif':        ['Times New Roman', 'DejaVu Serif'],
+    'axes.labelsize':    13,
+    'axes.titlesize':    14,
+    'xtick.labelsize':   11,
+    'ytick.labelsize':   11,
+    'legend.fontsize':   11,
+    'figure.dpi':        150,
+    'axes.spines.top':   False,
+    'axes.spines.right': False,
+    'axes.linewidth':    0.8,
+    'xtick.direction':   'out',
+    'ytick.direction':   'out',
+}
+
+# Colour used for all benchmark lines (neutral slate-blue)
+BENCH_COLOR   = '#4c72b0'
+MEAN_COLOR    = '#c0392b'   # red for mean reference line
+BAND_COLOR    = '#4c72b0'   # same hue, low alpha for ±std band
+
+
+def _apply_rc():
+    plt.rcParams.update(PUBLICATION_RC)
+
+
+def _load_benchmark(source) -> dict:
+    """Accept either a dict or a path to benchmark.json."""
+    if isinstance(source, dict):
+        return source
+    with open(source) as f:
+        return json.load(f)
+
+
+def _clean(values: list, skip: int = 1):
+    """Drop the first `skip` epochs (CUDA warmup) and NaNs."""
+    arr = np.array(values[skip:], dtype=float)
+    return arr[~np.isnan(arr)]
+
+
+def _add_mean_band(ax, values, color=MEAN_COLOR, band_color=BAND_COLOR,
+                   label_mean=True):
+    """Overlay a dashed mean line and a ±1 std shaded band."""
+    mu  = np.mean(values)
+    std = np.std(values)
+    ax.axhline(mu, color=color, linewidth=1.4, linestyle='--',
+               label=f'Mean = {mu:.2f}' if label_mean else None, zorder=4)
+    ax.axhspan(mu - std, mu + std, color=band_color, alpha=0.12,
+               label=f'±1 std ({std:.2f})', zorder=3)
+
+
+def _epoch_xaxis(ax, epochs):
+    ax.set_xlabel('Epoch', labelpad=6)
+    ax.set_xlim(epochs[0] - 0.5, epochs[-1] + 0.5)
+    # Auto-thin x ticks if many epochs
+    if len(epochs) > 30:
+        ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True, nbins=10))
+    else:
+        ax.set_xticks(epochs)
+    ax.grid(axis='y', alpha=0.3, linewidth=0.6)
+    ax.grid(axis='x', alpha=0.15, linewidth=0.4)
+
+
+# epoch time
+def plot_epoch_time(source, output_dir: str, skip: int = 1,
+                    model_name: str = 'Model'):
+    """
+    Line plot of wall-clock seconds per training epoch.
+
+    Args:
+        source      : benchmark dict or path to benchmark.json
+        output_dir  : directory to save the figure
+        skip        : number of warmup epochs to exclude from statistics
+                      (they are still drawn, but greyed out)
+        model_name  : label used in the title
+    """
+    _apply_rc()
+    bm     = _load_benchmark(source)
+    times  = np.array(bm['epoch_times_s'], dtype=float)
+    epochs = np.arange(1, len(times) + 1)
+    clean  = _clean(bm['epoch_times_s'], skip)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    # Warmup epochs (greyed out)
+    if skip > 0:
+        ax.plot(epochs[:skip], times[:skip], 'o--',
+                color='#aaaaaa', linewidth=1.2, markersize=4,
+                label='Warmup (excluded from stats)', zorder=2)
+
+    ax.plot(epochs[skip:], times[skip:], 'o-',
+            color=BENCH_COLOR, linewidth=1.6, markersize=4,
+            label='Epoch time', zorder=3)
+
+    _add_mean_band(ax, clean)
+    _epoch_xaxis(ax, epochs)
+
+    ax.set_ylabel('Time (s)')
+    ax.set_title(f'{model_name} — Training Time per Epoch', pad=10)
+    ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
+
+    plt.tight_layout()
+    os.makedirs(output_dir, exist_ok=True)
+    out = os.path.join(output_dir, 'epoch_time.png')
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Saved: {out}')
+
+
+# peak GPU memory
+def plot_gpu_memory(source, output_dir: str, skip: int = 1,
+                    model_name: str = 'Model'):
+    """
+    Line plot of peak GPU memory (MiB) per training epoch.
+    """
+    _apply_rc()
+    bm    = _load_benchmark(source)
+    raw   = np.array(bm['peak_gpu_mb'], dtype=float)
+    valid = ~np.isnan(raw)
+    if not valid.any():
+        print('No GPU memory data found — skipping gpu_memory.png')
+        return
+
+    epochs = np.arange(1, len(raw) + 1)
+    clean  = _clean(bm['peak_gpu_mb'], skip)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    if skip > 0:
+        ax.plot(epochs[:skip], raw[:skip], 'o--',
+                color='#aaaaaa', linewidth=1.2, markersize=4,
+                label='Warmup (excluded from stats)', zorder=2)
+
+    ax.plot(epochs[skip:], raw[skip:], 's-',
+            color=BENCH_COLOR, linewidth=1.6, markersize=4,
+            label='Peak GPU memory', zorder=3)
+
+    _add_mean_band(ax, clean)
+    _epoch_xaxis(ax, epochs)
+
+    # Secondary axis in GiB
+    ax2 = ax.twinx()
+    ax2.set_ylim(np.array(ax.get_ylim()) / 1024)
+    ax2.set_ylabel('Memory (GiB)', labelpad=6)
+    ax2.yaxis.set_major_formatter(mticker.FormatStrFormatter('%.1f'))
+    ax2.spines['top'].set_visible(False)
+
+    ax.set_ylabel('Peak GPU Memory (MiB)')
+    ax.set_title(f'{model_name} — Peak GPU Memory per Epoch', pad=10)
+    ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
+
+    plt.tight_layout()
+    os.makedirs(output_dir, exist_ok=True)
+    out = os.path.join(output_dir, 'gpu_memory.png')
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Saved: {out}')
+
+
+# training throughput
+def plot_throughput(source, output_dir: str, skip: int = 1,
+                    model_name: str = 'Model'):
+    """
+    Line plot of training throughput (samples / second) per epoch.
+    """
+    _apply_rc()
+    bm     = _load_benchmark(source)
+    thru   = np.array(bm['train_throughput'], dtype=float)
+    epochs = np.arange(1, len(thru) + 1)
+    clean  = _clean(bm['train_throughput'], skip)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    if skip > 0:
+        ax.plot(epochs[:skip], thru[:skip], 'o--',
+                color='#aaaaaa', linewidth=1.2, markersize=4,
+                label='Warmup (excluded from stats)', zorder=2)
+
+    ax.plot(epochs[skip:], thru[skip:], '^-',
+            color=BENCH_COLOR, linewidth=1.6, markersize=4,
+            label='Throughput', zorder=3)
+
+    _add_mean_band(ax, clean)
+    _epoch_xaxis(ax, epochs)
+
+    ax.set_ylabel('Samples / second')
+    ax.set_title(f'{model_name} — Training Throughput per Epoch', pad=10)
+    ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
+
+    plt.tight_layout()
+    os.makedirs(output_dir, exist_ok=True)
+    out = os.path.join(output_dir, 'throughput.png')
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Saved: {out}')
+
+
+# summary panel (all three + text table) 
+def plot_benchmark_summary(source, output_dir: str, skip: int = 1,
+                           model_name: str = 'Model'):
+    """
+    A 2×2 figure: epoch time | GPU memory | throughput | summary stats table.
+    All panels share the same publication style.
+    """
+    _apply_rc()
+    bm     = _load_benchmark(source)
+    summary = bm.get('summary', {})
+
+    times  = np.array(bm['epoch_times_s'],    dtype=float)
+    gpu    = np.array(bm['peak_gpu_mb'],       dtype=float)
+    thru   = np.array(bm['train_throughput'],  dtype=float)
+    epochs = np.arange(1, len(times) + 1)
+
+    c_times = _clean(bm['epoch_times_s'],    skip)
+    c_gpu   = _clean(bm['peak_gpu_mb'],      skip)
+    c_thru  = _clean(bm['train_throughput'], skip)
+
+    fig = plt.figure(figsize=(14, 9))
+    gs  = GridSpec(2, 2, figure=fig, hspace=0.42, wspace=0.35)
+
+    axes_cfg = [
+        (gs[0, 0], times, gpu,   'Time (s)',              'Epoch Time',          'o-', BENCH_COLOR),
+        (gs[0, 1], times, gpu,   'Peak GPU Mem (MiB)',    'Peak GPU Memory',     's-', BENCH_COLOR),
+        (gs[1, 0], times, thru,  'Samples / second',      'Training Throughput', '^-', BENCH_COLOR),
+    ]
+
+    datasets    = [times,  gpu,   thru]
+    clean_sets  = [c_times, c_gpu, c_thru]
+    ylabels     = ['Time (s)', 'Peak GPU Memory (MiB)', 'Samples / second']
+    subtitles   = ['Epoch Time', 'Peak GPU Memory', 'Training Throughput']
+    markers     = ['o-', 's-', '^-']
+    subplot_pos = [gs[0, 0], gs[0, 1], gs[1, 0]]
+
+    for pos, data, clean, ylabel, subtitle, marker in zip(
+            subplot_pos, datasets, clean_sets, ylabels, subtitles, markers):
+
+        ax = fig.add_subplot(pos)
+
+        if skip > 0:
+            ax.plot(epochs[:skip], data[:skip], 'o--',
+                    color='#aaaaaa', linewidth=1.0, markersize=3, zorder=2)
+
+        ax.plot(epochs[skip:], data[skip:], marker,
+                color=BENCH_COLOR, linewidth=1.4, markersize=3,
+                label=subtitle, zorder=3)
+
+        if len(clean) > 0:
+            _add_mean_band(ax, clean, label_mean=True)
+
+        _epoch_xaxis(ax, epochs)
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_title(subtitle, fontsize=12, pad=7)
+        ax.legend(fontsize=9, frameon=True, framealpha=0.9, edgecolor='#cccccc')
+
+    #Stats table panel
+    ax_t = fig.add_subplot(gs[1, 1])
+    ax_t.axis('off')
+
+    total_min = summary.get('total_train_time_s', np.sum(times)) / 60
+
+    rows = [
+        ['Metric',                    'Value'],
+        ['Epochs measured',           str(summary.get('epochs_measured',
+                                           len(c_times)))],
+        ['Mean epoch time',           f"{summary.get('avg_epoch_time_s',  np.mean(c_times)):.1f} s"],
+        ['Std epoch time',            f"{summary.get('std_epoch_time_s',  np.std(c_times)):.1f} s"],
+        ['Min / Max epoch time',      f"{summary.get('min_epoch_time_s',  np.min(c_times)):.1f} / "
+                                      f"{summary.get('max_epoch_time_s',  np.max(c_times)):.1f} s"],
+        ['Total training time',       f"{total_min:.1f} min"],
+        ['Mean peak GPU memory',      f"{summary.get('avg_peak_gpu_mb',   np.mean(c_gpu) if len(c_gpu) else float('nan')):.0f} MiB"],
+        ['Max peak GPU memory',       f"{summary.get('max_peak_gpu_mb',   np.max(c_gpu)  if len(c_gpu) else float('nan')):.0f} MiB"],
+        ['Mean throughput',           f"{summary.get('avg_throughput_sps',np.mean(c_thru)):.1f} samp/s"],
+    ]
+
+    col_widths = [0.62, 0.38]
+    row_h      = 0.09
+    y_start    = 0.95
+
+    # Header row
+    for col_idx, header in enumerate(rows[0]):
+        x = sum(col_widths[:col_idx]) + 0.02
+        ax_t.text(x, y_start, header, transform=ax_t.transAxes,
+                  fontsize=10.5, fontweight='bold', fontfamily='serif',
+                  va='top')
+
+    ax_t.plot([0, 1], [y_start - 0.01, y_start - 0.01], color="black", linewidth=0.8,
+              transform=ax_t.transAxes, clip_on=False)
+
+    for r_idx, row in enumerate(rows[1:]):
+        y = y_start - (r_idx + 1) * row_h - 0.04
+        bg = '#f2f4f8' if r_idx % 2 == 0 else 'white'
+        ax_t.add_patch(mpatches.FancyBboxPatch(
+            (0, y - 0.005), 1.0, row_h - 0.005,
+            boxstyle='square,pad=0', transform=ax_t.transAxes,
+            facecolor=bg, edgecolor='none', zorder=0))
+        for col_idx, cell in enumerate(row):
+            x = sum(col_widths[:col_idx]) + 0.02
+            ax_t.text(x, y + row_h * 0.55, cell, transform=ax_t.transAxes,
+                      fontsize=9.5, fontfamily='serif', va='center')
+
+    ax_t.set_title('Summary Statistics', fontsize=12, pad=7)
+
+    fig.suptitle(f'{model_name} — Training Benchmark', fontsize=15,
+                 fontweight='bold', y=0.99)
+
+    os.makedirs(output_dir, exist_ok=True)
+    out = os.path.join(output_dir, 'benchmark_summary.png')
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Saved: {out}')
+
+
+# master function for benchmarks
+def plot_all_benchmark(source, output_dir: str, skip: int = 1,
+                       model_name: str = 'Model'):
+    """
+    Generate all benchmark plots:
+      • epoch_time.png        — wall-clock time per epoch
+      • gpu_memory.png        — peak GPU memory per epoch
+      • throughput.png        — training throughput per epoch
+      • benchmark_summary.png — combined summary panel + stats table
+
+    Args:
+        source      : benchmark dict (in-memory) or path to benchmark.json
+        output_dir  : directory where plots are saved (created if absent)
+        skip        : warmup epochs to exclude from mean/std (default: 1)
+        model_name  : model label used in plot titles (e.g. 'RETFound LoRA')
+    """
+    plot_epoch_time(source, output_dir, skip, model_name)
+    plot_gpu_memory(source, output_dir, skip, model_name)
+    plot_throughput(source, output_dir, skip, model_name)
+    plot_benchmark_summary(source, output_dir, skip, model_name)
+    print(f'\nAll benchmark plots saved to: {output_dir}')

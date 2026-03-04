@@ -1,10 +1,12 @@
 import sys
 import os
+import time
 import math
 import random
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import json
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
@@ -24,7 +26,12 @@ from utilities.utils import (
     train_one_epoch_urfound,
     validate_urfound_with_metrics,
     subsample_dataset,
-    save_metric_plot
+    save_metric_plot,
+    plot_epoch_time,
+    plot_gpu_memory,
+    plot_throughput,
+    plot_benchmark_summary,
+    plot_all_benchmark
 )
 
 
@@ -301,12 +308,21 @@ def main():
     history_macro_f1 = []
     history_macro_auc = []
 
+    benchmark = {
+        "epoch_times_s":   [],
+        "peak_gpu_mb":     [],
+        "train_throughput": [],
+    }
 
     for epoch in range(NUM_EPOCHS):
 
         lr = lr_at_epoch(epoch)
         for pg in optimizer.param_groups:
             pg["lr"] = lr
+        
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(DEVICE)
+        t0 = time.perf_counter()
 
         train_loss, train_acc = train_one_epoch_urfound(
             model=model,
@@ -318,13 +334,22 @@ def main():
             scaler=scaler
         )
 
+        epoch_time = time.perf_counter() - t0
+        benchmark["epoch_times_s"].append(epoch_time)
+        benchmark["train_throughput"].append(len(train_dataset) / epoch_time)
+        benchmark["peak_gpu_mb"].append(
+            torch.cuda.max_memory_allocated(DEVICE) / 1024**2
+            if torch.cuda.is_available() else float("nan")
+        )
+
         if (epoch + 1) % 10 != 0:
             print(f"Epoch {epoch+1:03d}/{NUM_EPOCHS} | "
-                f"lr={lr:.2e} | "
-                 f"train_loss={train_loss:.4f} train_acc={train_acc:.2f}% | "
-                f"[Skipping validation]")
+                  f"lr={lr:.2e} | "
+                  f"train_loss={train_loss:.4f} train_acc={train_acc:.2f}% | "
+                  f"epoch_time={epoch_time:.1f}s | "
+                  f"peak_gpu={benchmark['peak_gpu_mb'][-1]:.0f}MiB | "
+                  f"[Skipping validation]")
             continue
-
 
         val_loss, val_acc, val_bal_acc, val_macro_f1, val_macro_auc, report =  validate_urfound_with_metrics(
                 model, validation_loader, criterion, DEVICE, NUM_CLASSES
@@ -357,7 +382,45 @@ def main():
     save_metric_plot(history_epochs, history_macro_auc, "Macro AUROC", plot_save_dir)
 
 
+    c_times = np.array(benchmark["epoch_times_s"][1:])
+    c_gpu   = np.array([v for v in benchmark["peak_gpu_mb"][1:] if not math.isnan(v)])
+    c_thru  = np.array(benchmark["train_throughput"][1:])
+
+    benchmark["summary"] = {
+        "epochs_measured":    len(c_times),
+        "avg_epoch_time_s":   float(np.mean(c_times)),
+        "std_epoch_time_s":   float(np.std(c_times)),
+        "min_epoch_time_s":   float(np.min(c_times)),
+        "max_epoch_time_s":   float(np.max(c_times)),
+        "total_train_time_s": float(sum(benchmark["epoch_times_s"])),
+        "avg_peak_gpu_mb":    float(np.mean(c_gpu)) if len(c_gpu) else None,
+        "max_peak_gpu_mb":    float(np.max(c_gpu))  if len(c_gpu) else None,
+        "avg_throughput_sps": float(np.mean(c_thru)),
+    }
+
+    s = benchmark["summary"]
+    print(f"\n{'='*60}")
+    print(f"BENCHMARK SUMMARY (epochs 2–{NUM_EPOCHS})")
+    print(f"{'='*60}")
+    print(f"  Avg epoch time  : {s['avg_epoch_time_s']:.1f}s ± {s['std_epoch_time_s']:.1f}s")
+    print(f"  Total train time: {s['total_train_time_s']/60:.1f} min")
+    print(f"  Avg peak GPU mem: {s['avg_peak_gpu_mb']:.0f} MiB")
+    print(f"  Max peak GPU mem: {s['max_peak_gpu_mb']:.0f} MiB")
+    print(f"  Avg throughput  : {s['avg_throughput_sps']:.1f} samples/s")
+    print(f"{'='*60}\n")
+
     os.makedirs("../best_models", exist_ok=True)
+    
+    with open("../best_models/urfound-benchmark.json", "w") as f:
+        json.dump(benchmark, f, indent=4)
+
+    plot_all_benchmark(
+        source     = benchmark,
+        output_dir = "./plots/retfound/urfound-benchmark-plots",
+        skip       = 1,
+        model_name = "URFound LoRA",
+
+    )
     save_path = "../best_models/best_urfound_model.pth"
 
     torch.save({
