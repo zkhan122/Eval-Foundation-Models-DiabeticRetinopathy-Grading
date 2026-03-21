@@ -346,25 +346,15 @@ if __name__ == "__main__":
 
     DR_NONLORA_TEST_RESULTS_DIR = "./testing/non-lora/results"
     DR_LORA_TEST_RESULTS_DIR = "./testing/lora-based/results"
+    GLAUCOMA_RESNET50_TEST_RESULTS_DIR = "./testing/results/resnet50-glaucoma"
 
-    lora_jsons = [
-        f"{DR_LORA_TEST_RESULTS_DIR}/retfound-glaucoma/retfound_glaucoma_test_results.json",
-        f"{DR_LORA_TEST_RESULTS_DIR}/urfound-glaucoma/urfound_glaucoma_test_results.json",
-        f"{DR_LORA_TEST_RESULTS_DIR}/clip-glaucoma/clip_glaucoma_test_results.json",
-    ]
+    #lora_jsons = [
+    #]
 
-    non_lora_jsons = [
-        f"{DR_NONLORA_TEST_RESULTS_DIR}/retfound-glaucoma-nonlora/retfound_glaucoma_nonlora_test_results.json",
-        f"{DR_NONLORA_TEST_RESULTS_DIR}/urfound-glaucoma-nonlora/urfound_glaucoma_nonlora_test_results.json",
-        f"{DR_NONLORA_TEST_RESULTS_DIR}/clip-glaucoma-nonlora/clip_glaucoma_nonlora_test_results.json",
-    ]
+    #non_lora_jsons = [
+    #]
 
-    try:
-        with open(non_lora_jsons[0], 'r') as file:
-            data = json.load(file)
-        print("File data =", data)
-    except FileNotFoundError:
-        print("Error: The file was not found.")
+    resnet_50_glaucoma_jsons = [f"{GLAUCOMA_RESNET50_TEST_RESULTS_DIR}/resnet50_glaucoma_test_results.json"]
 
     dr_classes = [
         "No DR",
@@ -374,12 +364,13 @@ if __name__ == "__main__":
         "Proliferative DR"
     ]
 
-    model_names = ["RETFound", "UrFound", "CLIP"]
+    glaucoma_classes = ["Healthy", "Glaucoma"]
+
+    model_names = ["ResNet50"]
 
     # DR plots
     # class_auc_collated(non_lora_jsons, model_names, dr_classes, "../plots/nonlora-final-plots", "NON-LORA")
     # class_auc_collated(lora_jsons, model_names, dr_classes, "../plots/lora-final-plots", "LORA")
 
     # Glaucoma plots
-    plot_all_metrics_glaucoma(lora_jsons, model_names, "../plots/lora-final-plots/glaucoma", "LORA")
-    plot_all_metrics_glaucoma(non_lora_jsons, model_names, "../plots/nonlora-final-plots/glaucoma", "NONLORA")
+    plot_all_metrics_glaucoma(resnet_50_glaucoma_jsons, model_names, "../plots/baseline-plots/resnet50-glaucoma-testing-plots", "ResNet50-Glaucoma")
