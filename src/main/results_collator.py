@@ -280,7 +280,7 @@ def plot_glaucoma_per_class_auc(json_paths, model_names, output_dir, MODE):
     for i, (path, model) in enumerate(zip(json_paths, model_names)):
         data   = _load_json(path)
         # per_class_auc is a dict: {"Healthy": val, "Glaucoma": val}
-        vals   = [data['per_class_auc'].get(c, 0.0) or 0.0 for c in class_names]
+        vals = [data['per_class_auc'].get(c, 0.0) / 100.0 for c in class_names]
         offset = (i - (n_models - 1) / 2) * width
         color  = COLOR_MAP.get(model, f'C{i}')
         bars   = ax.bar(x + offset, vals, width,
