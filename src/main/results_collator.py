@@ -327,20 +327,21 @@ def plot_resnet50_dr_auc_bars(json_paths, model_names, output_dir, MODE):
 
     for i, (path, model) in enumerate(zip(json_paths, model_names)):
         data   = _load_json(path)
+        # values stored as percentages (e.g. 81.47) not proportions (0.8147)
         vals   = [data[m] for m in metrics]
         offset = (i - (n_models - 1) / 2) * width
         color  = COLOR_MAP.get(model, f'C{i}')
         bars   = ax.bar(x + offset, vals, width,
                         label=model, color=color,
                         edgecolor='black', linewidth=0.6, zorder=3)
-        _label_bars(ax, bars)
+        _label_bars(ax, bars, fmt='{:.2f}')
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
-    ax.set_ylabel('AUC Score')
+    ax.set_ylabel('AUC Score (%)')
     ax.set_title(f'{MODE} DR Grading — Macro & Weighted AUC', pad=12)
-    ax.set_ylim(0.5, 1.05)
-    ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.05))
+    ax.set_ylim(50, 105)
+    ax.yaxis.set_minor_locator(mticker.MultipleLocator(5))
     ax.grid(axis='y', which='major', alpha=0.3, linewidth=0.6, zorder=0)
     ax.grid(axis='y', which='minor', alpha=0.15, linewidth=0.4, zorder=0)
     ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
@@ -357,29 +358,29 @@ def plot_resnet50_dr_per_class_auc(json_paths, model_names, output_dir, MODE):
     _apply_rc()
 
     dr_class_names = ["No DR", "Mild", "Moderate", "Severe", "Proliferative DR"]
-    x       = np.arange(len(dr_class_names))
-    width   = 0.22
+    x        = np.arange(len(dr_class_names))
+    width    = 0.22
     n_models = len(model_names)
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
     for i, (path, model) in enumerate(zip(json_paths, model_names)):
         data   = _load_json(path)
-        # per_class_auc is a dict keyed by class name
+        # values are stored as percentages (e.g. 81.52) not proportions (0.8152)
         vals   = [data['per_class_auc'].get(c) or 0.0 for c in dr_class_names]
         offset = (i - (n_models - 1) / 2) * width
         color  = COLOR_MAP.get(model, f'C{i}')
         bars   = ax.bar(x + offset, vals, width,
                         label=model, color=color,
                         edgecolor='black', linewidth=0.6, zorder=3)
-        _label_bars(ax, bars)
+        _label_bars(ax, bars, fmt='{:.2f}')
 
     ax.set_xticks(x)
     ax.set_xticklabels(dr_class_names, rotation=30, ha='right')
-    ax.set_ylabel('AUC Score')
+    ax.set_ylabel('AUC Score (%)')
     ax.set_title(f'{MODE} DR Grading — Per-Class AUC (One-vs-Rest)', pad=12)
-    ax.set_ylim(0.5, 1.05)
-    ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.05))
+    ax.set_ylim(50, 105)
+    ax.yaxis.set_minor_locator(mticker.MultipleLocator(5))
     ax.grid(axis='y', which='major', alpha=0.3, linewidth=0.6, zorder=0)
     ax.grid(axis='y', which='minor', alpha=0.15, linewidth=0.4, zorder=0)
     ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
