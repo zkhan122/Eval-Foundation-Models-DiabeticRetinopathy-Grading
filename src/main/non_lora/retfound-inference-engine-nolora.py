@@ -264,13 +264,14 @@ def main():
     print("\n" + "="*60)
     print("CREATING BALANCED SAMPLER FOR TRAINING")
     print("="*60)
-    
+    sampler = create_balanced_sampler(train_dataset)    
     print("="*60 + "\n")
     
     train_loader = DataLoader(
         train_dataset,
         batch_size=MICRO_BATCH_SIZE,
-        shuffle=True,
+        sampler=sampler,
+        shuffle=False,
         num_workers=NUM_WORKERS,
         pin_memory=True,
         persistent_workers=True,
@@ -308,33 +309,18 @@ def main():
     model.load_state_dict(checkpoint_model, strict=False)
     trunc_normal_(model.head.weight, std=2e-5)
 
-    TOTAL_BLOCKS = len(model.blocks)
-    UNFREEZE_LAST_N = 8   # tweak
-
-    # freezing everything
+    # freeze everything
     for param in model.parameters():
         param.requires_grad = False
 
-    # unfreezing last N transformer blocks
-    for block in model.blocks[TOTAL_BLOCKS - UNFREEZE_LAST_N:]:
-        for param in block.parameters():
-            param.requires_grad = True
-
-    # unfreezing classification head as this is to be finetuned
+    # only unfreeze the classification head
     for param in model.head.parameters():
         param.requires_grad = True
-
-    # unfreezing final normalization layer
-    if hasattr(model, "norm"):
-        for param in model.norm.parameters():
-            param.requires_grad = True 
-
-
 
     model = model.to(DEVICE)
 
     
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss()
 
     # criterion = nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
     

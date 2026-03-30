@@ -190,7 +190,7 @@ def validate(model, dataloader, criterion, device):
 
 def main():
     DATA_DIR = "../../../datasets"
-    SRC_DIR  = "../../"
+    SRC_DIR  = "../../../"
 
     root_dirs = {
         "DEEPDRID": f"{DATA_DIR}/DeepDRiD",
@@ -260,6 +260,7 @@ def main():
         train_dataset,
         batch_size=MICRO_BATCH_SIZE,
         sampler=sampler,
+        shuffle=False,
         num_workers=NUM_WORKERS,
         pin_memory=True,
         persistent_workers=True,

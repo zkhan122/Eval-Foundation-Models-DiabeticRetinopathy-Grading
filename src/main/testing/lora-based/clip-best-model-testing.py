@@ -26,13 +26,13 @@ class CLIPRetina(nn.Module):
         # Must be called "vision" — not vision_model
         self.vision = CLIPVisionModelWithProjection.from_pretrained(model_name)
 
-        embedding_dim = self.vision.config.projection_dim
+        embedding_dim = self.vision.config.hidden_size
         self.classifier = nn.Linear(embedding_dim, num_classes)
 
     def forward(self, images):
         outputs = self.vision(pixel_values=images)
-        image_embeds = outputs.image_embeds
-        logits = self.classifier(image_embeds)
+        image_features = outputs.last_hidden_state[:, 0, :]
+        logits = self.classifier(image_features)
         return logits
 
 
@@ -109,10 +109,10 @@ model = CLIPRetina("openai/clip-vit-large-patch14", NUM_CLASSES)
 
 
 peft_config = LoraConfig(
-    r=checkpoint["params"]["lora_r"],
-    lora_alpha=checkpoint["params"]["lora_alpha"],
+    r = checkpoint["lora"]["r"],
+    lora_alpha = checkpoint["lora"]["alpha"],
     target_modules=["q_proj", "k_proj", "v_proj"],
-    lora_dropout=0.05,  
+    lora_dropout = checkpoint["lora"]["dropout"],
     bias="none",
     modules_to_save=["classifier"],
     # task_type=TaskType.FEATURE_EXTRACTION
@@ -129,53 +129,8 @@ checkpoint_state_dict = checkpoint["model_state_dict"]
 adapted_dict = {}
 
 for key, value in checkpoint_state_dict.items():
-    new_key = key
-    
-    # Handle vision_model transformation (insert "vision" before "vision_model")
-    if "vision_model" in key:
-        parts = key.split('.')
-        for i, part in enumerate(parts):
-            if part == "vision_model":
-                # Insert "vision" before "vision_model"
-                new_parts = parts[:i] + ["vision", "vision_model"] + parts[i+1:]
-                new_key = '.'.join(new_parts)
-                break
-    
-    # Handle visual_projection transformation (add "vision." prefix)
-    elif "visual_projection" in key:
-        parts = key.split('.')
-        for i, part in enumerate(parts):
-            if part == "visual_projection":
-                # Add "vision." before "visual_projection"
-                new_parts = parts[:i] + ["vision", "visual_projection"] + parts[i+1:]
-                new_key = '.'.join(new_parts)
-                break
-    
+    new_key = key.replace("vision._model", "vision.vision_model")
     adapted_dict[new_key] = value
-
-# Debug: Print some transformations to verify (fixed indexing)
-print("Sample transformations:")
-for i, (old_key, _) in enumerate(checkpoint_state_dict.items()):
-    if i >= 5:
-        break
-    # Recompute new_key for display (simple but works)
-    new_key = old_key
-    if "vision_model" in old_key:
-        parts = old_key.split('.')
-        for j, part in enumerate(parts):
-            if part == "vision_model":
-                new_parts = parts[:j] + ["vision", "vision_model"] + parts[j+1:]
-                new_key = '.'.join(new_parts)
-                break
-    elif "visual_projection" in old_key:
-        parts = old_key.split('.')
-        for j, part in enumerate(parts):
-            if part == "visual_projection":
-                new_parts = parts[:j] + ["vision", "visual_projection"] + parts[j+1:]
-                new_key = '.'.join(new_parts)
-                break
-    print(f"  {old_key} -> {new_key}")
-
 
 
 # Load the adapted state dict

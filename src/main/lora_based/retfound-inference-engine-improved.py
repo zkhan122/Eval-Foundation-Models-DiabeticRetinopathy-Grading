@@ -1,4 +1,4 @@
-mport sys
+import sys
 import os
 import time
 import math
@@ -273,12 +273,16 @@ def main():
     print("CREATING BALANCED SAMPLER FOR TRAINING")
     print("="*60)
     
+    sampler = create_balanced_sampler(train_dataset)
+
     print("="*60 + "\n")
     
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=MICRO_BATCH_SIZE,
-        shuffle=True,
+        sampler=sampler,
+        shuffle=False,
         num_workers=NUM_WORKERS,
         pin_memory=True,
         persistent_workers=True,
@@ -326,6 +330,13 @@ def main():
         modules_to_save=["head"]
     )
     model = get_peft_model(model, peft_config)
+    
+    for name, param in model.named_parameters():
+        if "lora" in name or "head" in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
+
     model = model.to(DEVICE)
 
     
@@ -485,7 +496,7 @@ def main():
         model_name = "RETFound LoRA",
     )
 
-    save_path = "../best_models/best_retfound_model.pth"
+    save_path = "../best_models/best_retfound_lora.pth"
     torch.save({
         "val_acc": best_val_acc,
         "val_bal_acc": best_val_bal_acc,

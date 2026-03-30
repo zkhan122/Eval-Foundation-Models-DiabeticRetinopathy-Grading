@@ -12,7 +12,7 @@ from timm.models.layers import trunc_normal_
 import torchvision
 from sklearn.model_selection import train_test_split
 from torchvision import transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from data_processing.dataset import CombinedDRDataSet
 from utilities.utils import identity_transform, class_balanced_weights, get_specific_layer_names, train_one_epoch_clip, validate_clip_with_metrics, subsample_dataset, save_metric_plot, plot_epoch_time, plot_gpu_memory, plot_throughput, plot_benchmark_summary, plot_all_benchmark
 from torch import nn
@@ -25,16 +25,15 @@ class CLIPRetina(nn.Module):
     def __init__(self, model_name, num_classes):
         super().__init__()
         self.vision = CLIPVisionModelWithProjection.from_pretrained(model_name)
-        embedding_dim = self.vision.config.projection_dim
+        embedding_dim = self.vision.config.hidden_size
         self.classifier = nn.Sequential(
-            nn.Dropout(0.5),
             nn.Linear(embedding_dim, num_classes)
         )
 
     def forward(self, images):
         outputs = self.vision(pixel_values=images)
-        image_embeds = outputs.image_embeds
-        logits = self.classifier(image_embeds)
+        image_features = outputs.last_hidden_state[:, 0, :]
+        logits = self.classifier(image_features)
         return logits
 
 
@@ -99,6 +98,29 @@ def make_param_groups(model: torch.nn.Module, weight_decay: float):
 
     return groups
 
+
+def create_balanced_sampler(dataset, num_classes=NUM_CLASSES):
+    """
+    Create a WeightedRandomSampler that balances classes during training.
+    Each sample gets weighted inversely to its class frequency.
+    """
+    labels = np.array(dataset.labels, dtype=np.int64)
+
+    class_counts = np.bincount(labels, minlength=num_classes)
+
+    class_weights = class_balanced_weights(class_counts, beta=0.9999, device=DEVICE)
+    sample_weights = class_weights[labels]
+
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True  # Allow oversampling minority classes
+    )
+
+    print(f"Created balanced sampler with {len(sample_weights)} samples")
+    print(f"Sample weights range: [{sample_weights.min():.4f}, {sample_weights.max():.4f}]")
+
+    return sampler
 
 def main():
     DATA_DIR = "../../../datasets"
@@ -214,10 +236,14 @@ def main():
     plt.savefig("../train_class_distribution_and_weights.jpg")
     plt.close()
 
+    
+    sampler = create_balanced_sampler(train_dataset)
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=MICRO_BATCH_SIZE,
-        shuffle=True,
+        sampler=sampler,
+        shuffle=False,
         num_workers=NUM_WORKERS,
         pin_memory=True,
         persistent_workers=True,
@@ -274,7 +300,7 @@ def main():
     print(f"Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.2f}%)")
 
 
-    criterion = nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss()
 
     backbone_params = []
     head_params = []

@@ -1,21 +1,39 @@
 {
-    "test_accuracy": 55.850690381465014,
-    "test_loss": 2.724279632904756,
-    "precision": 0.41593013179958194,
-    "recall": 0.44893744273955527,
-    "f1_score": 0.41308904274904173,
-    "quadratic_weighted_kappa": 0.5347016653051637,
+    "test_accuracy": 67.82120290194243,
+    "test_loss": 0.9062552448846505,
+    "precision": 0.5221251303778361,
+    "recall": 0.6040956851527418,
+    "f1_score": 0.5363310049910858,
+    "quadratic_weighted_kappa": 0.720282849506955,
     "Per-class AUC": [
-        0.7531871313087175,
-        0.5500118235038474,
-        0.7146120803708279,
-        0.8927318678218726,
-        0.8720250222672576
+        0.8565400761571834,
+        0.6777435854828677,
+        0.8206361068842046,
+        0.9354633888044914,
+        0.9653773443726043
     ],
-    "macro_auc": 0.7565135850545046,
-    "weighted_auc": 0.7405721594137309,
-    "training_validation_accuracy": 71.03448275862068,
+    "macro_auc": 0.8511521003402702,
+    "weighted_auc": 0.8438985315461495,
+    "training_validation_accuracy": 61.48228586795567,
     "checkpoint": "best_clip_model.pth",
-    "lora": {},
-    "train": {}
+    "lora": {
+        "r": 8,
+        "alpha": 32,
+        "dropout": 0.05
+    },
+    "train": {
+        "epochs": 50,
+        "lr_max": 0.0005,
+        "lr_min": 1e-06,
+        "warmup_epochs": 5,
+        "cooldown_epochs": 10,
+        "weight_decay": 0.0005,
+        "betas": [
+            0.9,
+            0.99
+        ],
+        "micro_batch": 8,
+        "grad_accum_steps": 16,
+        "effective_batch": 128
+    }
 }

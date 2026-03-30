@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from torchvision import transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch import nn
 from torch.cuda.amp import GradScaler
 
@@ -23,6 +23,7 @@ from data_processing.dataset import CombinedDRDataSet
 from utilities.utils import (
     identity_transform,
     train_one_epoch_urfound,
+    class_balanced_weights,
     validate_urfound_with_metrics,
     subsample_dataset,
     save_metric_plot,
@@ -103,6 +104,28 @@ def make_param_groups(model, weight_decay):
 
     return groups
 
+def create_balanced_sampler(dataset, num_classes=NUM_CLASSES):
+    """
+    Create a WeightedRandomSampler that balances classes during training.
+    Each sample gets weighted inversely to its class frequency.
+    """
+    labels = np.array(dataset.labels, dtype=np.int64)
+
+    class_counts = np.bincount(labels, minlength=num_classes)
+
+    class_weights = class_balanced_weights(class_counts, beta=0.9999, device=DEVICE)
+    sample_weights = class_weights[labels]
+
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True  # Allow oversampling minority classes
+    )
+
+    print(f"Created balanced sampler with {len(sample_weights)} samples")
+    print(f"Sample weights range: [{sample_weights.min():.4f}, {sample_weights.max():.4f}]")
+
+    return sampler
 
 def main():
 
@@ -208,12 +231,13 @@ def main():
     print("CREATING BALANCED SAMPLER FOR TRAINING")
     print("="*60)
 
-
+    sampler = create_balanced_sampler(train_dataset)
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=MICRO_BATCH_SIZE,
-        shuffle=True,
+        sampler=sampler,
+        shuffle=False,
         num_workers=NUM_WORKERS,
         pin_memory=True,
         persistent_workers=True,
@@ -265,34 +289,18 @@ def main():
     trunc_normal_(model.head.weight, std=2e-5)
 
     
-    TOTAL_BLOCKS = len(model.blocks)
-    UNFREEZE_LAST_N = 6  # ViT-Base: 4–6 recommended
 
-    # Freeze all
+    # Freeze everything but classification head
     for param in model.parameters():
         param.requires_grad = False
 
-    # Unfreeze last N transformer blocks
-    for block in model.blocks[TOTAL_BLOCKS - UNFREEZE_LAST_N:]:
-        for param in block.parameters():
-            param.requires_grad = True
-
-    # Unfreeze classification head
+    # only unfreeze the classification head
     for param in model.head.parameters():
         param.requires_grad = True
 
-    # Unfreeze norm layers
-    if hasattr(model, "norm"):
-        for param in model.norm.parameters():
-            param.requires_grad = True
-
-    if hasattr(model, "fc_norm"):
-        for param in model.fc_norm.parameters():
-            param.requires_grad = True
-
     model = model.to(DEVICE)
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss()
 
     optimizer = torch.optim.AdamW(
         make_param_groups(model, WEIGHT_DECAY),

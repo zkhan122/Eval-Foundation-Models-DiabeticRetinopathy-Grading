@@ -7,10 +7,8 @@ import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from models.RETFound_MAE import models_vit
-from models.RETFound_MAE.util import pos_embed
 from timm.models.layers import trunc_normal_
 from torchvision import transforms
 from torch.utils.data import DataLoader
@@ -236,7 +234,7 @@ def validate(model, dataloader, criterion, device):
 
 def main():
     DATA_DIR = "../../../datasets"
-    SRC_DIR = "../../"
+    SRC_DIR = "../../../"
 
     root_dirs = {
         "G1020":  f"{DATA_DIR}/G1020",

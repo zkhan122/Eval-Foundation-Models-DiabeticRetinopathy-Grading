@@ -15,7 +15,7 @@ from timm.models.layers import trunc_normal_
 import torchvision
 from sklearn.model_selection import train_test_split
 from torchvision import transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from data_processing.dataset import CombinedDRDataSet
 from utilities.utils import identity_transform, class_balanced_weights, get_specific_layer_names, train_one_epoch_clip, validate_clip_with_metrics, subsample_dataset, save_metric_plot, plot_epoch_time, plot_gpu_memory, plot_throughput, plot_benchmark_summary, plot_all_benchmark
 from torch import nn
@@ -33,13 +33,13 @@ class CLIPRetina(nn.Module):
         super().__init__()
         self.vision = CLIPVisionModelWithProjection.from_pretrained(model_name)
         
-        embedding_dim = self.vision.config.projection_dim
+        embedding_dim = self.vision.config.hidden_size
         self.classifier = nn.Linear(embedding_dim, num_classes)
 
     def forward(self, images):
         outputs = self.vision(pixel_values=images)
-        image_embeds = outputs.image_embeds
-        logits = self.classifier(image_embeds)
+        image_features = outputs.last_hidden_state[:, 0, :]
+        logits = self.classifier(image_features)
         return logits
 
 
@@ -264,13 +264,15 @@ def main():
     print("\n" + "="*60)
     print("CREATING BALANCED SAMPLER FOR TRAINING")
     print("="*60)
-
+    
+    sampler = create_balanced_sampler(train_dataset)
     print("="*60 + "\n")
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=MICRO_BATCH_SIZE,
-        shuffle=True,
+        sampler=sampler,
+        shuffle=False,
         num_workers=NUM_WORKERS,
         pin_memory=True,
         persistent_workers=True,
@@ -310,11 +312,17 @@ def main():
         target_modules=["q_proj", "k_proj", "v_proj"], # target attention layers in ViT
         lora_dropout=LORA_DROPOUT,
         bias="none",    
-        modules_to_save=["head"]
+        modules_to_save=["classifier"]
     )
 
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
+    
+    for name, param in model.named_parameters():
+        if "lora" in name or "classifier" in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
 
     model = model.to(DEVICE)
 
@@ -323,9 +331,14 @@ def main():
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"\nTotal parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
+    
+
+    for name, _ in model.named_modules():
+        if "proj" in name:
+            print(name)
 
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss()
 
     # criterion = nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
 
