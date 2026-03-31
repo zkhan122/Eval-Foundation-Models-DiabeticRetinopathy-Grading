@@ -8,7 +8,7 @@ import matplotlib.cm as cm
 from PIL import Image
 from torchvision import transforms
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 from torch.utils.data import DataLoader
 from torch import nn
@@ -26,8 +26,8 @@ from utilities.utils import identity_transform
 
 NUM_CLASSES = 2
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-DATA_DIR    = "../../../../datasets"
-SRC_DIR     = "../../../"
+DATA_DIR    = "../../../datasets"
+SRC_DIR     = "../../"
 
 CLASS_NAMES = ["Healthy", "Glaucoma"]
 
@@ -139,56 +139,57 @@ def load_resnet50(checkpoint_path):
 # -------------------------
 
 def attention_rollout_timm(model, image_tensor):
-    """
-    Attention rollout for timm ViT (RETFound, UrFound).
-    Hooks attn_drop output in each block — during eval, dropout is identity
-    so this captures the raw softmaxed attention weights.
-    Returns (H, H) numpy array normalised 0-1.
-    """
     attention_maps = []
     hooks = []
 
     def make_hook(store):
         def hook(module, input, output):
-            store.append(output.detach().cpu())
+            store.append(input[0].detach().cpu())
         return hook
 
-    # unwrap PEFT to access base ViT blocks
     base = model.base_model.model
     for block in base.blocks:
-        h = block.attn.attn_drop.register_forward_hook(make_hook(attention_maps))
-        hooks.append(h)
+        block.attn.fused_attn = False
 
+    for name, module in model.named_modules():
+        if name.endswith("attn.attn_drop"):
+            hooks.append(module.register_forward_hook(make_hook(attention_maps)))
+
+    model.train()
     with torch.no_grad():
         _ = model(image_tensor.to(DEVICE))
+    model.eval()
 
     for h in hooks:
         h.remove()
 
-    # rollout: A_hat = 0.5*A + 0.5*I, then multiply through layers
+    for block in base.blocks:
+        block.attn.fused_attn = True
+
+    if not attention_maps:
+        raise RuntimeError("No attention maps captured.")
+
     seq_len = attention_maps[0].size(-1)
     result  = torch.eye(seq_len)
     for attn in attention_maps:
-        attn_mean    = attn[0].mean(dim=0)                        # (seq, seq)
-        attn_hat     = 0.5 * attn_mean + 0.5 * torch.eye(seq_len)
-        attn_hat     = attn_hat / attn_hat.sum(dim=-1, keepdim=True)
-        result       = attn_hat @ result
+        attn_mean = attn[0].mean(dim=0)
+        attn_hat  = 0.5 * attn_mean + 0.5 * torch.eye(seq_len)
+        attn_hat  = attn_hat / attn_hat.sum(dim=-1, keepdim=True)
+        result    = attn_hat @ result
 
-    # CLS token row, drop CLS itself → patch attentions
     mask = result[0, 1:].numpy()
     n    = int(len(mask) ** 0.5)
     mask = mask.reshape(n, n)
     mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
     return mask
 
-
 def attention_rollout_clip(model, image_tensor):
-    """
-    Attention rollout for CLIP ViT using output_attentions=True.
-    Returns (H, H) numpy array normalised 0-1.
-    """
-    # unwrap PEFT → CLIPRetina → vision model
+    # for projection_dim architecture, vision is CLIPVisionModelWithProjection
+    # need to call with output_attentions on the underlying vision_model
     vision = model.base_model.model.vision
+
+    # set eager mode so output_attentions works
+    vision.config._attn_implementation = "eager"
 
     with torch.no_grad():
         outputs = vision(
@@ -196,10 +197,10 @@ def attention_rollout_clip(model, image_tensor):
             output_attentions=True
         )
 
-    attentions = outputs.attentions   # tuple of (1, heads, seq, seq)
+    attentions = outputs.attentions
+    seq_len    = attentions[0].size(-1)
+    result     = torch.eye(seq_len)
 
-    seq_len = attentions[0].size(-1)
-    result  = torch.eye(seq_len)
     for attn in attentions:
         attn_mean = attn[0].mean(dim=0).cpu()
         attn_hat  = 0.5 * attn_mean + 0.5 * torch.eye(seq_len)
@@ -211,7 +212,6 @@ def attention_rollout_clip(model, image_tensor):
     mask = mask.reshape(n, n)
     mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
     return mask
-
 
 # -------------------------
 # Grad-CAM — ResNet50
