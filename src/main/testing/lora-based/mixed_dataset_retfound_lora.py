@@ -63,7 +63,7 @@ def evaluate(model, dataloader, criterion, device):
 
     probs  = np.concatenate(all_logits, axis=0)   # (N, 8)
     labels = np.concatenate(all_labels, axis=0)   # (N, 8)
-    preds  = (probs >= 0.3).astype(int)
+    preds  = (probs >= 0.5).astype(int)
 
     avg_loss = total_loss / len(dataloader)
 
@@ -115,7 +115,7 @@ def main():
     ])
 
     test_dataset = ODIRDataset(
-        img_dir_test, csv_path, split="test",
+        img_dir_test, csv_path, split="val",
         img_transform=test_transformations
     )
     print(f"Test samples: {len(test_dataset)}")
@@ -194,7 +194,7 @@ def main():
     }
 
     os.makedirs("results/retfound-mixed-disease", exist_ok=True)
-    results_path = "results/retfound-mixed-disease/retfound_mixed_30percentCI-test_results.json"
+    results_path = "results/retfound-mixed-disease/retfound_mixed_50percentCI-test_results.json"
 
     if os.path.exists(results_path):
         os.remove(results_path)
@@ -206,8 +206,8 @@ def main():
     json_to_csv(results_path, "results/retfound-mixed-disease", "retfound_mixed_disease_results")
 
     os.makedirs("../probs_numpy", exist_ok=True)
-    # np.save("../probs_numpy/retfound_mixed_disease_true.npy",  y_true)
-    # np.save("../probs_numpy/retfound_mixed_disease_probs.npy", y_probs)
+    np.save("../probs_numpy/retfound_mixed_disease_true.npy",  y_true)
+    np.save("../probs_numpy/retfound_mixed_disease_probs.npy", y_probs)
 
     print(f"\nResults saved to: {results_path}")
     print("=" * 70)

@@ -7,7 +7,6 @@ import pandas as pd
 import time
 import numpy as np
 import matplotlib.ticker as mticker
-from sklearn.metrics import multilabel_confusion_matrix
 
 def load_auc_data(json_path):
     with open(json_path, 'r') as f:
@@ -106,16 +105,11 @@ def _plot_single_metric(json_paths, model_names, output_dir, MODE,
 
     y_positions = np.arange(n_models)[::-1]
 
-    # ── FIX: detect percentage scale (e.g. 73.78) vs proportion (e.g. 0.7378)
-    is_percentage = max(values) > 1.5
-    x_cap = 100.0 if is_percentage else 1.0
-    x_floor = 0.0
-
     v_min  = min(values)
     v_max  = max(values)
-    margin = max((v_max - v_min) * 0.5, 0.05 * x_cap)
-    x_lo   = max(x_floor, v_min - margin)
-    x_hi   = min(x_cap,   v_max + margin)
+    margin = max((v_max - v_min) * 0.5, 0.05)
+    x_lo   = max(0.0, v_min - margin)
+    x_hi   = min(1.0, v_max + margin)
 
     for y, model, value in zip(y_positions, model_names, values):
         color = COLOR_MAP.get(model, 'C0')
@@ -123,18 +117,14 @@ def _plot_single_metric(json_paths, model_names, output_dir, MODE,
         ax.hlines(y, x_lo, value, color=color, linewidth=2.0, alpha=0.7)
         ax.scatter(value, y, color=color, s=120, zorder=5,
                    edgecolors='white', linewidths=1.2)
-        ax.text(value + (x_hi - x_lo) * 0.018, y,
-                f'{value:.2f}' if is_percentage else f'{value:.4f}',
+        ax.text(value + (x_hi - x_lo) * 0.018, y, f'{value:.4f}',
                 va='center', ha='left', fontsize=10,
                 color=color, fontfamily='serif', fontweight='bold')
 
     ax.set_yticks(y_positions)
     ax.set_yticklabels(model_names, fontsize=11)
     ax.set_xlim(x_lo, x_hi + (x_hi - x_lo) * 0.18)
-    ax.set_xlabel(
-        f'{metric_display} (%)' if is_percentage else metric_display,
-        labelpad=8
-    )
+    ax.set_xlabel(metric_display, labelpad=8)
     ax.set_title(f'{MODE} — {metric_display}', pad=10)
     ax.grid(axis='x', alpha=0.3, linewidth=0.6)
     ax.axvline(x_lo, color='black', linewidth=0.6)
@@ -144,6 +134,7 @@ def _plot_single_metric(json_paths, model_names, output_dir, MODE,
     plt.savefig(out, dpi=300, bbox_inches='tight')
     plt.close()
     print(f'Saved: {out}')
+
 
 def _label_bars(ax, bars, fmt='{:.3f}', fontsize=8.5, pad=0.004):
     for bar in bars:
@@ -221,15 +212,6 @@ def plot_qwk(json_paths, model_names, output_dir, MODE):
                         'Quadratic Weighted Kappa', 'qwk.png')
 
 
-def plot_sensitivity(json_paths, model_names, output_dir, MODE):
-    _plot_single_metric(json_paths, model_names, output_dir, MODE,
-                        'sensitivity', 'Sensitivity', 'sensitivity.png')
-
-
-def plot_specificity(json_paths, model_names, output_dir, MODE):
-    _plot_single_metric(json_paths, model_names, output_dir, MODE,
-                        'specificity', 'Specificity', 'specificity.png')
-
 def plot_all_metrics(json_paths, model_names, output_dir, MODE):
     os.makedirs(output_dir, exist_ok=True)
 
@@ -238,9 +220,6 @@ def plot_all_metrics(json_paths, model_names, output_dir, MODE):
     plot_recall(json_paths, model_names, output_dir, MODE)
     plot_f1(json_paths, model_names, output_dir, MODE)
     plot_qwk(json_paths, model_names, output_dir, MODE)
-    plot_sensitivity(json_paths, model_names, output_dir, MODE)
-    plot_specificity(json_paths, model_names, output_dir, MODE)
-
 
     print(f'\nAll plots saved to: {output_dir}')
 
@@ -263,44 +242,22 @@ def plot_glaucoma_auc_bars(json_paths, model_names, output_dir, MODE):
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    all_vals = []
-
     for i, (path, model) in enumerate(zip(json_paths, model_names)):
-        data = _load_json(path)
-        vals = [data[m] for m in metrics]
-
-        all_vals.extend(vals)
-
+        data   = _load_json(path)
+        vals   = [data[m] for m in metrics]
         offset = (i - (n_models - 1) / 2) * width
         color  = COLOR_MAP.get(model, f'C{i}')
-
-        bars = ax.bar(
-            x + offset, vals, width,
-            label=model, color=color,
-            edgecolor='black', linewidth=0.6, zorder=3
-        )
-
-        # format labels correctly
-        fmt = '{:.2f}' if max(vals) > 1.5 else '{:.3f}'
-        _label_bars(ax, bars, fmt=fmt)
-
-    # 🔍 Detect scale globally
-    is_percentage = max(all_vals) > 1.5
+        bars   = ax.bar(x + offset, vals, width,
+                        label=model, color=color,
+                        edgecolor='black', linewidth=0.6, zorder=3)
+        _label_bars(ax, bars)
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
-
-    if is_percentage:
-        ax.set_ylabel('AUC Score (%)')
-        ax.set_ylim(50, 105)
-        ax.yaxis.set_minor_locator(mticker.MultipleLocator(5))
-    else:
-        ax.set_ylabel('AUC Score')
-        ax.set_ylim(0.5, 1.05)
-        ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.05))
-
+    ax.set_ylabel('AUC Score')
     ax.set_title(f'{MODE} Glaucoma — Macro & Weighted AUC', pad=12)
-
+    ax.set_ylim(0.5, 1.05)
+    ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.05))
     ax.grid(axis='y', which='major', alpha=0.3, linewidth=0.6, zorder=0)
     ax.grid(axis='y', which='minor', alpha=0.15, linewidth=0.4, zorder=0)
     ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
@@ -310,7 +267,7 @@ def plot_glaucoma_auc_bars(json_paths, model_names, output_dir, MODE):
     plt.savefig(out, dpi=300, bbox_inches='tight')
     plt.close()
     print(f'Saved: {out}')
-    
+
 
 def plot_glaucoma_balanced_accuracy(json_paths, model_names, output_dir, MODE):
     _plot_single_metric(json_paths, model_names, output_dir, MODE,
@@ -461,117 +418,9 @@ def plot_all_metrics_resnet50_dr(json_paths, model_names, output_dir, MODE):
     plot_resnet50_dr_balanced_accuracy(json_paths, model_names, output_dir, MODE)
     plot_resnet50_dr_macro_f1(json_paths, model_names, output_dir, MODE)
     plot_resnet50_dr_qwk(json_paths, model_names, output_dir, MODE)
-    plot_resnet50_dr_per_class_recall(json_paths, model_names, output_dir, MODE)
 
     print(f'\nAll ResNet50 DR plots saved to: {output_dir}')
 
-def plot_resnet50_dr_per_class_recall(json_paths, model_names, output_dir, MODE):
-    """Per-class recall bar chart for DR (5 classes)."""
-    _apply_rc()
-
-    dr_class_names = ["No DR", "Mild", "Moderate", "Severe", "Proliferative DR"]
-    x        = np.arange(len(dr_class_names))
-    width    = 0.22
-    n_models = len(model_names)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-
-    for i, (path, model) in enumerate(zip(json_paths, model_names)):
-        data = _load_json(path)
-
-        if 'recall_per_class' not in data:
-            raise KeyError(f"'recall_per_class' missing in {path}")
-
-        # values are percentages (e.g. 58.71)
-        vals = []
-        for c in dr_class_names:
-            if c not in data['recall_per_class']:
-                raise KeyError(f"Missing class '{c}' in recall_per_class ({path})")
-            vals.append(data['recall_per_class'][c])
-
-        offset = (i - (n_models - 1) / 2) * width
-        color  = COLOR_MAP.get(model, f'C{i}')
-
-        bars = ax.bar(
-            x + offset, vals, width,
-            label=model, color=color,
-            edgecolor='black', linewidth=0.6, zorder=3
-        )
-
-        _label_bars(ax, bars, fmt='{:.2f}')
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(dr_class_names, rotation=30, ha='right')
-    ax.set_ylabel('Recall (%)')
-    ax.set_title(f'{MODE} DR Grading — Per-Class Recall', pad=12)
-
-    ax.set_ylim(0, 105)
-    ax.yaxis.set_minor_locator(mticker.MultipleLocator(5))
-
-    ax.grid(axis='y', which='major', alpha=0.3, linewidth=0.6, zorder=0)
-    ax.grid(axis='y', which='minor', alpha=0.15, linewidth=0.4, zorder=0)
-
-    ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
-
-    plt.tight_layout()
-    out = os.path.join(output_dir, 'resnet50_dr_per_class_recall.png')
-    plt.savefig(out, dpi=300, bbox_inches='tight')
-    plt.close()
-    print(f'Saved: {out}')
-
-
-def plot_resnet50_glaucoma_per_class_recall(json_paths, model_names, output_dir, MODE):
-    """Per-class recall bar chart for Glaucoma (Healthy vs Glaucoma)."""
-    _apply_rc()
-
-    glaucoma_class_names = ["Healthy", "Glaucoma"]
-    x        = np.arange(len(glaucoma_class_names))
-    width    = 0.22
-    n_models = len(model_names)
-
-    fig, ax = plt.subplots(figsize=(7, 4))
-
-    for i, (path, model) in enumerate(zip(json_paths, model_names)):
-        data = _load_json(path)
-
-        if 'recall_per_class' not in data:
-            raise KeyError(f"'recall_per_class' missing in {path}")
-
-        vals = []
-        for c in glaucoma_class_names:
-            if c not in data['recall_per_class']:
-                raise KeyError(f"Missing class '{c}' in recall_per_class ({path})")
-            vals.append(data['recall_per_class'][c])
-
-        offset = (i - (n_models - 1) / 2) * width
-        color  = COLOR_MAP.get(model, f'C{i}')
-
-        bars = ax.bar(
-            x + offset, vals, width,
-            label=model, color=color,
-            edgecolor='black', linewidth=0.6, zorder=3
-        )
-
-        _label_bars(ax, bars, fmt='{:.2f}')
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(glaucoma_class_names)
-    ax.set_ylabel('Recall (%)')
-    ax.set_title(f'{MODE} Glaucoma Detection — Per-Class Recall', pad=12)
-
-    ax.set_ylim(0, 105)
-    ax.yaxis.set_minor_locator(mticker.MultipleLocator(5))
-
-    ax.grid(axis='y', which='major', alpha=0.3, linewidth=0.6, zorder=0)
-    ax.grid(axis='y', which='minor', alpha=0.15, linewidth=0.4, zorder=0)
-
-    ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
-
-    plt.tight_layout()
-    out = os.path.join(output_dir, 'resnet50_glaucoma_per_class_recall.png')
-    plt.savefig(out, dpi=300, bbox_inches='tight')
-    plt.close()
-    print(f'Saved: {out}')
 
 # -------------------------
 # Jensen-Shannon Divergence
@@ -627,39 +476,189 @@ def plot_js_heatmap(js_dict, model_names, title, output_path):
     print(f"Saved: {output_path}")
 
 
-def compute_and_patch_sensitivity_specificity(probs_path, true_path, json_path):
-    """
-    Computes macro sensitivity and specificity from .npy files
-    and writes them into the existing results JSON in-place.
-    Skips if both keys are already present.
-    """
-    data = _load_json(json_path)
-    if 'sensitivity' in data and 'specificity' in data:
-        print(f"Already patched: {json_path}")
-        return
+# -------------------------
+# ODIR-5K Multi-Label plotting functions
+# JSON keys: exact_match_accuracy, macro_auc, weighted_auc,
+#            macro_f1, weighted_f1, per_class_auc, per_class_f1
+# -------------------------
 
-    probs  = np.load(probs_path)
-    labels = np.load(true_path).astype(int)
-    preds  = np.argmax(probs, axis=1)
+ODIR_CLASS_NAMES = ["Normal", "Diabetes", "Glaucoma", "Cataract",
+                    "AMD", "Hypertension", "Myopia", "Other"]
 
-    mcm         = multilabel_confusion_matrix(labels, preds)
-    sensitivity = float(np.mean(mcm[:, 1, 1] / (mcm[:, 1, 1] + mcm[:, 1, 0] + 1e-10)))
-    specificity = float(np.mean(mcm[:, 0, 0] / (mcm[:, 0, 0] + mcm[:, 0, 1] + 1e-10)))
 
-    data['sensitivity'] = sensitivity
-    data['specificity'] = specificity
+def plot_odir_auc_bars(json_paths, model_names, output_dir, MODE):
+    """Macro and weighted AUC comparison across ODIR models."""
+    _apply_rc()
 
-    with open(json_path, 'w') as f:
-        json.dump(data, f, indent=4)
-    print(f"Patched sensitivity={sensitivity:.4f}, specificity={specificity:.4f} → {json_path}")
+    metrics = ['macro_auc', 'weighted_auc']
+    labels  = ['Macro AUC', 'Weighted AUC']
+    x       = np.arange(len(labels))
+    width   = 0.30
+    n_models = len(model_names)
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+
+    for i, (path, model) in enumerate(zip(json_paths, model_names)):
+        data   = _load_json(path)
+        vals   = [data[m] for m in metrics]
+        offset = (i - (n_models - 1) / 2) * width
+        color  = COLOR_MAP.get(model, f'C{i}')
+        bars   = ax.bar(x + offset, vals, width,
+                        label=model, color=color,
+                        edgecolor='black', linewidth=0.6, zorder=3)
+        _label_bars(ax, bars, fmt='{:.4f}')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_ylabel('AUC Score')
+    ax.set_title(f'{MODE} ODIR-5K — Macro & Weighted AUC', pad=12)
+    ax.set_ylim(0.5, 1.05)
+    ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.05))
+    ax.grid(axis='y', which='major', alpha=0.3, linewidth=0.6, zorder=0)
+    ax.grid(axis='y', which='minor', alpha=0.15, linewidth=0.4, zorder=0)
+    ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
+
+    plt.tight_layout()
+    out = os.path.join(output_dir, 'odir_auc_bars.png')
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Saved: {out}')
+
+
+def plot_odir_per_class_auc(json_paths, model_names, output_dir, MODE):
+    """Per-class AUC bar chart across all 8 ODIR disease classes."""
+    _apply_rc()
+
+    x       = np.arange(len(ODIR_CLASS_NAMES))
+    width   = 0.35
+    n_models = len(model_names)
+
+    fig, ax = plt.subplots(figsize=(13, 5))
+
+    for i, (path, model) in enumerate(zip(json_paths, model_names)):
+        data = _load_json(path)
+        vals = [data['per_class_auc'].get(c) or 0.0 for c in ODIR_CLASS_NAMES]
+        offset = (i - (n_models - 1) / 2) * width
+        color  = COLOR_MAP.get(model, f'C{i}')
+        bars   = ax.bar(x + offset, vals, width,
+                        label=model, color=color,
+                        edgecolor='black', linewidth=0.6, zorder=3)
+        _label_bars(ax, bars, fmt='{:.3f}', fontsize=7.5)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(ODIR_CLASS_NAMES, rotation=30, ha='right')
+    ax.set_ylabel('AUC Score (OvR)')
+    ax.set_title(f'{MODE} ODIR-5K — Per-Class AUC (One-vs-Rest)', pad=12)
+    ax.set_ylim(0.5, 1.08)
+    ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.05))
+    ax.grid(axis='y', which='major', alpha=0.3, linewidth=0.6, zorder=0)
+    ax.grid(axis='y', which='minor', alpha=0.15, linewidth=0.4, zorder=0)
+    ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
+
+    plt.tight_layout()
+    out = os.path.join(output_dir, 'odir_per_class_auc.png')
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Saved: {out}')
+
+
+def plot_odir_per_class_f1(json_paths, model_names, output_dir, MODE):
+    """Per-class F1 bar chart across all 8 ODIR disease classes."""
+    _apply_rc()
+
+    x        = np.arange(len(ODIR_CLASS_NAMES))
+    width    = 0.35
+    n_models = len(model_names)
+
+    fig, ax = plt.subplots(figsize=(13, 5))
+
+    for i, (path, model) in enumerate(zip(json_paths, model_names)):
+        data = _load_json(path)
+        vals = [data['per_class_f1'].get(c, 0.0) for c in ODIR_CLASS_NAMES]
+        offset = (i - (n_models - 1) / 2) * width
+        color  = COLOR_MAP.get(model, f'C{i}')
+        bars   = ax.bar(x + offset, vals, width,
+                        label=model, color=color,
+                        edgecolor='black', linewidth=0.6, zorder=3)
+        _label_bars(ax, bars, fmt='{:.3f}', fontsize=7.5)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(ODIR_CLASS_NAMES, rotation=30, ha='right')
+    ax.set_ylabel('F1 Score')
+    ax.set_title(f'{MODE} ODIR-5K — Per-Class F1', pad=12)
+    ax.set_ylim(0.0, 1.08)
+    ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.1))
+    ax.grid(axis='y', which='major', alpha=0.3, linewidth=0.6, zorder=0)
+    ax.grid(axis='y', which='minor', alpha=0.15, linewidth=0.4, zorder=0)
+    ax.legend(frameon=True, framealpha=0.9, edgecolor='#cccccc')
+
+    plt.tight_layout()
+    out = os.path.join(output_dir, 'odir_per_class_f1.png')
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Saved: {out}')
+
+
+def plot_odir_exact_match(json_paths, model_names, output_dir, MODE):
+    """Exact match accuracy lollipop chart."""
+    _apply_rc()
+
+    values   = [_load_json(p)['exact_match_accuracy'] for p in json_paths]
+    n_models = len(model_names)
+
+    fig, ax = plt.subplots(figsize=(6, 2.8))
+    y_positions = np.arange(n_models)[::-1]
+
+    v_min  = min(values)
+    v_max  = max(values)
+    margin = max((v_max - v_min) * 0.5, 0.05)
+    x_lo   = max(0.0, v_min - margin)
+    x_hi   = min(1.0, v_max + margin)
+
+    for y, model, value in zip(y_positions, model_names, values):
+        color = COLOR_MAP.get(model, 'C0')
+        ax.hlines(y, x_lo, value, color=color, linewidth=2.0, alpha=0.7)
+        ax.scatter(value, y, color=color, s=120, zorder=5,
+                   edgecolors='white', linewidths=1.2)
+        ax.text(value + (x_hi - x_lo) * 0.018, y,
+                f'{value:.4f}',
+                va='center', ha='left', fontsize=10,
+                color=color, fontfamily='serif', fontweight='bold')
+
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels(model_names, fontsize=11)
+    ax.set_xlim(x_lo, x_hi + (x_hi - x_lo) * 0.22)
+    ax.set_xlabel('Exact Match Accuracy', labelpad=8)
+    ax.set_title(f'{MODE} ODIR-5K — Exact Match Accuracy', pad=10)
+    ax.grid(axis='x', alpha=0.3, linewidth=0.6)
+    ax.axvline(x_lo, color='black', linewidth=0.6)
+
+    plt.tight_layout()
+    out = os.path.join(output_dir, 'odir_exact_match.png')
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Saved: {out}')
+
+
+def plot_odir_macro_f1(json_paths, model_names, output_dir, MODE):
+    _plot_single_metric(json_paths, model_names, output_dir, MODE,
+                        'macro_f1', 'Macro F1', 'odir_macro_f1.png')
+
+
+def plot_all_metrics_odir(json_paths, model_names, output_dir, MODE):
+    os.makedirs(output_dir, exist_ok=True)
+    plot_odir_auc_bars(json_paths, model_names, output_dir, MODE)
+    plot_odir_per_class_auc(json_paths, model_names, output_dir, MODE)
+    plot_odir_per_class_f1(json_paths, model_names, output_dir, MODE)
+    plot_odir_exact_match(json_paths, model_names, output_dir, MODE)
+    plot_odir_macro_f1(json_paths, model_names, output_dir, MODE)
+    print(f'\nAll ODIR plots saved to: {output_dir}')
 
 
 if __name__ == "__main__":
 
     DR_NONLORA_TEST_RESULTS_DIR       = "./testing/non-lora/results"
     DR_LORA_TEST_RESULTS_DIR          = "./testing/lora-based/results"
-    GLAUCOMA_LORA_TEST_RESULTS_DIR = "./testing/lora-based/results"
-    GLAUCOMA_NONLORA_TEST_RESULTS_DIR = "./testing/non-lora/results"
     GLAUCOMA_RESNET50_TEST_RESULTS_DIR = "./testing/results/resnet50-glaucoma"
     GLAUCOMA_RESNET50_TEST_PLOTS_DIR  = "../plots/baseline-plots/resnet50-glaucoma-testing-plots"
     DR_RESNET50_TEST_RESULTS_DIR      = "./testing/results/resnet50-dr"
@@ -672,17 +671,35 @@ if __name__ == "__main__":
     dr_classes       = ["No DR", "Mild", "Moderate", "Severe", "Proliferative DR"]
     glaucoma_classes = ["Healthy", "Glaucoma"]
 
-    dr_true_files = {
-        "RETFound_LORA_DR":    f"{PROBS_DIR}/retfound_dr_lora_true.npy",
-        "RETFound_NONLORA_DR": f"{PROBS_DIR}/retfound_dr_nonlora_true.npy",
-        "UrFound_LORA_DR":     f"{PROBS_DIR}/urfound_lora_dr_true.npy",
-        "UrFound_NONLORA_DR":  f"{PROBS_DIR}/urfound-dr-nonlora_true.npy",
-        "CLIP_LORA_DR":        f"{PROBS_DIR}/clip_dr_lora_true.npy",
-        "CLIP_NONLORA_DR":     f"{PROBS_DIR}/clip-dr-nonlora_true.npy",
-        "ResNet50_DR":         f"{PROBS_DIR}/resnet50-dr_true.npy",
-    }
+    # -------------------------
+    # ResNet50 DR plots
+    # -------------------------
+    resnet50_dr_jsons = [
+        f"{DR_RESNET50_TEST_RESULTS_DIR}/resnet50_dr_test_results.json"
+    ]
+    resnet50_dr_model_names = ["ResNet50"]
 
+    if all(os.path.exists(p) for p in resnet50_dr_jsons):
+        plot_all_metrics_resnet50_dr(
+            resnet50_dr_jsons,
+            resnet50_dr_model_names,
+            DR_RESNET50_TEST_PLOTS_DIR,
+            "BASELINE"
+        )
+    else:
+        print("Skipping ResNet50 DR plots — results JSON not found.")
 
+    # -------------------------
+    # ResNet50 Glaucoma plots
+    # -------------------------
+    # resnet_50_glaucoma_jsons = [
+    #     f"{GLAUCOMA_RESNET50_TEST_RESULTS_DIR}/resnet50_glaucoma_test_results.json"
+    # ]
+    # plot_all_metrics_glaucoma(resnet_50_glaucoma_jsons, ["ResNet50"], GLAUCOMA_RESNET50_TEST_PLOTS_DIR, "BASELINE")
+
+    # -------------------------
+    # JS divergence
+    # -------------------------
     dr_prob_files = {
         "RETFound_LORA_DR":    f"{PROBS_DIR}/retfound_dr_lora_probs.npy",
         "RETFound_NONLORA_DR": f"{PROBS_DIR}/retfound_dr_nonlora_probs.npy",
@@ -702,127 +719,8 @@ if __name__ == "__main__":
         "CLIP_NONLORA_GLAUCOMA":     f"{PROBS_DIR}/clip_nonlora_glaucoma_probs.npy",
         "ResNet50_GLAUCOMA":         f"{PROBS_DIR}/resnet50_glaucoma_probs.npy",
     }
-    
-    lora_glaucoma_jsons = [
-        f"{GLAUCOMA_LORA_TEST_RESULTS_DIR}/retfound-glaucoma/retfound_glaucoma_test_results.json",
-        f"{GLAUCOMA_LORA_TEST_RESULTS_DIR}/urfound-glaucoma/urfound_glaucoma_test_results.json",
-        f"{GLAUCOMA_LORA_TEST_RESULTS_DIR}/clip-glaucoma/clip_glaucoma_test_results.json",
-    ]
-    
-    lora_glaucoma_model_names = ["RETFound", "UrFound", "CLIP"]
-    lora_glaucoma_plot_dir    = "../plots/lora-final-plots/glaucoma"
-
-    if all(os.path.exists(p) for p in lora_glaucoma_jsons):
-        plot_all_metrics_glaucoma(
-            lora_glaucoma_jsons,
-            lora_glaucoma_model_names,
-            lora_glaucoma_plot_dir,
-            "LORA"
-        )
-    else:
-        missing = [p for p in lora_glaucoma_jsons if not os.path.exists(p)]
-        print(f"Skipping LoRA glaucoma plots — missing: {missing}")
-
-
-    # ── Non-LoRA Glaucoma (foundation models) ──────────────────────────────────
-    nonlora_glaucoma_jsons = [
-        f"{GLAUCOMA_NONLORA_TEST_RESULTS_DIR}/retfound-glaucoma-nonlora/retfound_glaucoma_nonlora_test_results.json",
-        f"{GLAUCOMA_NONLORA_TEST_RESULTS_DIR}/urfound-glaucoma-nonlora/urfound_glaucoma_nonlora_test_results.json",
-        f"{GLAUCOMA_NONLORA_TEST_RESULTS_DIR}/clip-glaucoma-nonlora/clip_glaucoma_nonlora_test_results.json",
-    ]
-    nonlora_glaucoma_model_names = ["RETFound", "UrFound", "CLIP"]
-    nonlora_glaucoma_plot_dir    = "../plots/nonlora-final-plots/glaucoma"
-
-    if all(os.path.exists(p) for p in nonlora_glaucoma_jsons):
-        plot_all_metrics_glaucoma(
-            nonlora_glaucoma_jsons,
-            nonlora_glaucoma_model_names,
-            nonlora_glaucoma_plot_dir,
-            "NON-LORA"
-        )
-    else:
-        missing = [p for p in nonlora_glaucoma_jsons if not os.path.exists(p)]
-        print(f"Skipping non-LoRA glaucoma plots — missing: {missing}")
-    
-    # general DR plots
-    lora_dr_jsons = [
-            f"{DR_LORA_TEST_RESULTS_DIR}/retfound/retfound_test_results.json",
-            f"{DR_LORA_TEST_RESULTS_DIR}/urfound/urfound_test_results.json",
-            f"{DR_LORA_TEST_RESULTS_DIR}/clip/clip_test_results.json",
-    ]
-
-    nonlora_dr_jsons = [f"{DR_NONLORA_TEST_RESULTS_DIR}/retfound/retfound_nonlora_test_results.json",
-                        f"{DR_NONLORA_TEST_RESULTS_DIR}/urfound/urfound_nonlora_test_results.json",
-                        f"{DR_NONLORA_TEST_RESULTS_DIR}/clip/clip_nonlora_test_results.json",
-    ]
-
-    lora_dr_model_names = ["RETFound", "UrFound", "CLIP"]
-    lora_dr_plot_dir    = "../plots/lora-final-plots/dr"
-
-    patch_map_lora_dr = {
-        "RETFound_LORA_DR": lora_dr_jsons[0],
-        "UrFound_LORA_DR":  lora_dr_jsons[1],
-        "CLIP_LORA_DR":     lora_dr_jsons[2],
-    }
-    patch_map_nonlora_dr = {
-        "RETFound_NONLORA_DR": nonlora_dr_jsons[0],
-        "UrFound_NONLORA_DR":  nonlora_dr_jsons[1],
-        "CLIP_NONLORA_DR":     nonlora_dr_jsons[2],
-    }
-    for key, json_path in {**patch_map_lora_dr, **patch_map_nonlora_dr}.items():
-        if os.path.exists(json_path) and os.path.exists(dr_prob_files[key]) and os.path.exists(dr_true_files[key]):
-            compute_and_patch_sensitivity_specificity(
-                dr_prob_files[key], dr_true_files[key], json_path
-            )
-        else:
-            print(f"Skipping patch for {key} — missing files")
-
-
-
-    if all(os.path.exists(p) for p in lora_dr_jsons):
-        plot_all_metrics(lora_dr_jsons, lora_dr_model_names, lora_dr_plot_dir, "LORA")
-    else:
-        missing = [p for p in lora_dr_jsons if not os.path.exists(p)]
-        print(f"Skipping LoRA DR plots — missing: {missing}")
-   
-    nonlora_dr_model_names = ["RETFound", "UrFound", "CLIP"]
-    nonlora_dr_plot_dir    = "../plots/nonlora-final-plots/dr"
-
-    if all(os.path.exists(p) for p in nonlora_dr_jsons):
-        plot_all_metrics(nonlora_dr_jsons, nonlora_dr_model_names, nonlora_dr_plot_dir, "NON-LORA")
-    else:
-        missing = [p for p in nonlora_dr_jsons if not os.path.exists(p)]
-        print(f"Skipping non-LoRA DR plots — missing: {missing}")
-
-    # ResNet50 DR plots
-    
-    resnet50_dr_jsons = [
-        f"{DR_RESNET50_TEST_RESULTS_DIR}/resnet50_dr_test_results.json"
-    ]
-    resnet50_dr_model_names = ["ResNet50"]
-
-    if all(os.path.exists(p) for p in resnet50_dr_jsons):
-        plot_all_metrics_resnet50_dr(
-            resnet50_dr_jsons,
-            resnet50_dr_model_names,
-            DR_RESNET50_TEST_PLOTS_DIR,
-            "BASELINE"
-        )
-    else:
-        print("Skipping ResNet50 DR plots — results JSON not found.")
-
-    # -------------------------
-    # ResNet50 Glaucoma plots
-    # -------------------------
-    resnet_50_glaucoma_jsons = [
-        f"{GLAUCOMA_RESNET50_TEST_RESULTS_DIR}/resnet50_glaucoma_test_results.json"
-    ]
-    plot_all_metrics_glaucoma(resnet_50_glaucoma_jsons, ["ResNet50"], GLAUCOMA_RESNET50_TEST_PLOTS_DIR, "BASELINE")
-
-    # JS divergence
 
     # DR JS divergence
-
     if all(os.path.exists(p) for p in dr_prob_files.values()):
         probs_dict     = {name: np.load(path) for name, path in dr_prob_files.items()}
         js_results     = compute_pairwise_js(probs_dict)
@@ -841,6 +739,50 @@ if __name__ == "__main__":
     else:
         missing = [name for name, path in dr_prob_files.items() if not os.path.exists(path)]
         print(f"Skipping DR JS divergence — missing prob files for: {missing}")
+
+    # -------------------------
+    # ODIR-5K plots
+    # -------------------------
+    ODIR_TEST_RESULTS_DIR = "./testing/"
+    ODIR_PLOT_DIR         = "../plots/odir-plots"
+
+    odir_jsons = [
+        f"{ODIR_TEST_RESULTS_DIR}/lora-based/results/retfound-mixed-disease/retfound_mixed_50percentCI-test_results.json",
+        f"{ODIR_TEST_RESULTS_DIR}/baseline-cnns/results/resnet50-mixed-disease/resnet50_mixed_50percentCI_test_results.json",
+    ]
+    odir_model_names = ["RETFound", "ResNet50"]
+
+    if all(os.path.exists(p) for p in odir_jsons):
+        plot_all_metrics_odir(odir_jsons, odir_model_names, ODIR_PLOT_DIR, "ODIR-5K")
+    else:
+        missing = [p for p in odir_jsons if not os.path.exists(p)]
+        print(f"Skipping ODIR plots — missing: {missing}")
+
+    # ODIR JS divergence
+    odir_prob_files = {
+        "RETFound_ODIR":  f"{PROBS_DIR}/retfound_mixed_disease_probs.npy",
+        "ResNet50_ODIR":  f"{PROBS_DIR}/resnet50_mixed_disease_probs.npy",
+    }
+
+    if all(os.path.exists(p) for p in odir_prob_files.values()):
+        probs_dict     = {name: np.load(path) for name, path in odir_prob_files.items()}
+        js_results     = compute_pairwise_js(probs_dict)
+        model_names_js = list(probs_dict.keys())
+
+        os.makedirs(JS_RESULTS_DIR, exist_ok=True)
+        with open(f"{JS_RESULTS_DIR}/odir_js_divergence.json", "w") as f:
+            json.dump({"task": "ODIR multi-label classification",
+                       "js_divergence": js_results}, f, indent=4)
+
+        os.makedirs(JS_PLOT_DIR, exist_ok=True)
+        plot_js_heatmap(
+            js_results, model_names_js,
+            "ODIR-5K Multi-Label — Pairwise Jensen-Shannon Divergence\n(0 = identical distributions, 1 = non-overlapping)",
+            f"{JS_PLOT_DIR}/odir_js_heatmap.png"
+        )
+    else:
+        missing = [name for name, path in odir_prob_files.items() if not os.path.exists(path)]
+        print(f"Skipping ODIR JS divergence — missing prob files for: {missing}")
 
     # Glaucoma JS divergence
     if all(os.path.exists(p) for p in glaucoma_prob_files.values()):

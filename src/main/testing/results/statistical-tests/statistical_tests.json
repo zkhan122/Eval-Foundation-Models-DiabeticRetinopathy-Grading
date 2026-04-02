@@ -578,6 +578,45 @@
             }
         }
     },
+    "odir_multilabel": {
+        "bootstrap_ci": {
+            "RETFound-ODIR": {
+                "Exact Match": {
+                    "mean": 32.81360437842064,
+                    "ci_lo": 30.258014073494916,
+                    "ci_hi": 35.49648162627052
+                },
+                "Macro F1": {
+                    "mean": 56.39393009877327,
+                    "ci_lo": 53.947963516535225,
+                    "ci_hi": 58.79550342297828
+                },
+                "Macro AUC": {
+                    "mean": 89.69546076984548,
+                    "ci_lo": 88.3186156856578,
+                    "ci_hi": 90.91609919937032
+                }
+            },
+            "ResNet50-ODIR": {
+                "Exact Match": {
+                    "mean": 22.245347928068803,
+                    "ci_lo": 19.935496481626274,
+                    "ci_hi": 24.47224394057858
+                },
+                "Macro F1": {
+                    "mean": 45.1654324496068,
+                    "ci_lo": 42.77280923007792,
+                    "ci_hi": 47.24977446061533
+                },
+                "Macro AUC": {
+                    "mean": 83.29470973418906,
+                    "ci_lo": 81.4450764378297,
+                    "ci_hi": 85.07144367956973
+                }
+            }
+        },
+        "note": "McNemar's test not applicable for multi-label classification"
+    },
     "config": {
         "n_bootstrap": 1000,
         "ci": 95,

@@ -1,0 +1,9 @@
+{
+    "task": "ODIR multi-label classification",
+    "js_divergence": {
+        "RETFound_ODIR_vs_RETFound_ODIR": 0.0,
+        "RETFound_ODIR_vs_ResNet50_ODIR": 0.21064773201942444,
+        "ResNet50_ODIR_vs_RETFound_ODIR": 0.21064773201942444,
+        "ResNet50_ODIR_vs_ResNet50_ODIR": 0.0
+    }
+}

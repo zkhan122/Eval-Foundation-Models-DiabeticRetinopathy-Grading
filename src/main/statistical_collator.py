@@ -8,6 +8,9 @@ from sklearn.metrics import (
     balanced_accuracy_score, f1_score, roc_auc_score, cohen_kappa_score
 )
 
+# -------------------------
+# config
+# -------------------------
 
 PROBS_DIR = "./testing/probs_numpy"
 OUT_DIR   = "./testing/results/statistical-tests"
@@ -15,7 +18,7 @@ PLOT_DIR  = "../plots/statistical-tests"
 N_BOOT    = 1000
 ALPHA     = 0.05
 CI        = 95
-THRESHOLD = 0.6    # glaucoma decision threshold matches what is in testing scripts
+THRESHOLD = 0.6    
 rng       = np.random.default_rng(42)
 
 RC = {
@@ -44,7 +47,9 @@ DR_MODELS = {
 }
 
 
+# -------------------------
 # loading — y_pred derived from y_probs
+# -------------------------
 
 def load(prefix, task):
     yt  = np.load(f"{PROBS_DIR}/{prefix}_true.npy")
@@ -78,7 +83,7 @@ def compute_metrics(yt, yp, ypr, task):
     return m
 
 
-# bootstrapping CI
+# bootstrap CI
 
 def bootstrap(yt, yp, ypr, task):
     keys   = list(compute_metrics(yt, yp, ypr, task).keys())
@@ -150,21 +155,20 @@ def plot_ci(ci_all, title, path):
     plt.close()
     print(f"Saved: {path}")
 
-
 # plot: McNemar p-value heatmap with significance stars
 
 def plot_mcnemar(mc, model_names, title, path):
     plt.rcParams.update(RC)
     n = len(model_names)
     idx = {m: i for i, m in enumerate(model_names)}
- 
+
     # separate matrices for p-value, chi2, b01 and b10
     # initialise p_mat to 1.0 (not significant) and the rest to 0
     p_mat   = np.ones((n, n))
     chi_mat = np.zeros((n, n))
     b01_mat = np.zeros((n, n), dtype=int)
     b10_mat = np.zeros((n, n), dtype=int)
- 
+
     for pair, (stat, p, b01, b10) in mc.items():
         a, b = pair.split("_vs_")
         if a in idx and b in idx:
@@ -174,7 +178,7 @@ def plot_mcnemar(mc, model_names, title, path):
             chi_mat[i, j] = chi_mat[j, i] = stat
             b01_mat[i, j] = b10_mat[j, i] = b01   # direction: A wrong B right
             b10_mat[i, j] = b01_mat[j, i] = b10   # direction: A right B wrong
- 
+
     # build multi-line annotation for every off-diagonal cell
     annot = np.empty((n, n), dtype=object)
     for i in range(n):
@@ -188,11 +192,11 @@ def plot_mcnemar(mc, model_names, title, path):
                     f"b01={b01_mat[i,j]}\n"
                     f"b10={b10_mat[i,j]}"
                 )
- 
+
     # scale figure generously so the four-line annotations have room
     cell  = max(1.8, n * 1.1)
     fig, ax = plt.subplots(figsize=(cell, cell))
- 
+
     sns.heatmap(
         p_mat,
         annot=annot,
@@ -208,7 +212,7 @@ def plot_mcnemar(mc, model_names, title, path):
         cbar_kws={"label": "p-value", "shrink": 0.7},
         annot_kws={"size": max(5, 8 - n)}   # shrink font as matrix grows
     )
- 
+
     ax.set_title(
         f"{title}\n"
         f"* p<0.05  ** p<0.01  *** p<0.001  ns = not significant\n"
@@ -221,6 +225,9 @@ def plot_mcnemar(mc, model_names, title, path):
     plt.savefig(path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"Saved: {path}")
+
+
+# runner
 
 def run(model_map, task, label):
     print(f"\n{'='*60}\n{label}\n{'='*60}")
@@ -260,12 +267,101 @@ def run(model_map, task, label):
     return ci_all, mc
 
 
+# main
+
+ODIR_MODELS = {
+    "RETFound-ODIR":  "retfound_mixed_disease",
+    "ResNet50-ODIR":  "resnet50_mixed_disease",
+}
+
+ODIR_CLASS_NAMES = ["Normal", "Diabetes", "Glaucoma", "Cataract",
+                    "AMD", "Hypertension", "Myopia", "Other"]
+
+
+def load_odir(prefix):
+    """Load ODIR multi-label probs and derive binary predictions at threshold 0.5."""
+    yt  = np.load(f"{PROBS_DIR}/{prefix}_true.npy")    # (N, 8) float
+    ypr = np.load(f"{PROBS_DIR}/{prefix}_probs.npy")   # (N, 8) sigmoid probs
+    yp  = (ypr >= 0.5).astype(int)                     # (N, 8) binary preds
+    return yt, yp, ypr
+
+
+def compute_metrics_odir(yt, yp, ypr):
+    """
+    Metrics for multi-label ODIR.
+    yt, yp : (N, 8) int arrays
+    ypr    : (N, 8) float probability arrays
+    """
+    from sklearn.metrics import roc_auc_score, f1_score
+    m = {}
+
+    # exact match accuracy
+    m["Exact Match"] = 100.0 * float((yp == yt.astype(int)).all(axis=1).mean())
+
+    # macro F1
+    m["Macro F1"] = 100.0 * float(
+        f1_score(yt, yp, average="macro", zero_division=0)
+    )
+
+    # macro AUC — primary metric for ODIR
+    try:
+        m["Macro AUC"] = 100.0 * float(
+            roc_auc_score(yt, ypr, average="macro")
+        )
+    except ValueError:
+        m["Macro AUC"] = 0.0
+
+    return m
+
+
+def bootstrap_odir(yt, yp, ypr):
+    keys   = list(compute_metrics_odir(yt, yp, ypr).keys())
+    scores = {k: [] for k in keys}
+    n      = len(yt)
+    for _ in range(N_BOOT):
+        idx = rng.integers(0, n, size=n)
+        for k, v in compute_metrics_odir(yt[idx], yp[idx], ypr[idx]).items():
+            scores[k].append(v)
+    lo = (100 - CI) / 2
+    return {k: (float(np.mean(v)),
+                float(np.percentile(v, lo)),
+                float(np.percentile(v, 100 - lo)))
+            for k, v in scores.items()}
+
+
+def run_odir(model_map, label):
+    """
+    Bootstrap CI for ODIR multi-label models.
+    McNemar's test is not applied — it is not defined for multi-label problems.
+    """
+    print(f"\n{'='*60}\n{label}\n{'='*60}")
+    ci_all = {}
+
+    for name, prefix in model_map.items():
+        if not exists(prefix):
+            print(f"  Skipping {name} — {prefix}_true/probs.npy not found")
+            continue
+        yt, yp, ypr  = load_odir(prefix)
+        ci_all[name] = bootstrap_odir(yt, yp, ypr)
+        for k, (mean, lo, hi) in ci_all[name].items():
+            print(f"  {name:<20} {k:<14}: {mean:.2f}  ({CI}% CI {lo:.2f}–{hi:.2f})")
+
+    print(f"\n  Note: McNemar's test is not applicable for multi-label classification.")
+
+    os.makedirs(PLOT_DIR, exist_ok=True)
+    if ci_all:
+        plot_ci(ci_all, f"{label} — Bootstrap {CI}% Confidence Intervals",
+                f"{PLOT_DIR}/odir_bootstrap_ci.png")
+
+    return ci_all
+
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
     g_ci, g_mc = run(GLAUCOMA_MODELS, "glaucoma", "Glaucoma Detection")
     d_ci, d_mc = run(DR_MODELS,       "dr",       "DR Severity Grading")
+    o_ci       = run_odir(ODIR_MODELS,             "ODIR-5K Multi-Label Classification")
 
     def serialise(ci, mc):
         return {
@@ -286,8 +382,16 @@ def main():
         json.dump({
             "glaucoma":   serialise(g_ci, g_mc),
             "dr_grading": serialise(d_ci, d_mc),
-            "config":     {"n_bootstrap": N_BOOT, "ci": CI,
-                           "alpha": ALPHA, "glaucoma_threshold": THRESHOLD}
+            "odir_multilabel": {
+                "bootstrap_ci": {
+                    m: {k: {"mean": v[0], "ci_lo": v[1], "ci_hi": v[2]}
+                        for k, v in met.items()}
+                    for m, met in o_ci.items()
+                },
+                "note": "McNemar's test not applicable for multi-label classification"
+            },
+            "config": {"n_bootstrap": N_BOOT, "ci": CI,
+                       "alpha": ALPHA, "glaucoma_threshold": THRESHOLD}
         }, f, indent=4)
 
     print(f"\nAll results saved to: {OUT_DIR}")
