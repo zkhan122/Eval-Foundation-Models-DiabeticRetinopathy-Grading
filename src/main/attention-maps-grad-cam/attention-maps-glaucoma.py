@@ -368,14 +368,14 @@ def plot_attention_grid(found_images, models_dict, output_path):
     # column headers (top row only)
     col_headers = ["Original"] + model_names
     for col, header in enumerate(col_headers):
-        axes[0, col].set_title(header, fontsize=11, fontweight='bold', pad=6)
+        axes[0, col].set_title(header, fontsize=30, fontweight='bold', pad=6)
 
     for row, cls_idx in enumerate(class_indices):
         img_tensor, pil_img, img_path, model_probs = found_images[cls_idx]
 
         # --- original image column ---
         axes[row, 0].set_ylabel(
-            CLASS_NAMES[cls_idx], fontsize=11,
+            CLASS_NAMES[cls_idx], fontsize=20,
             fontweight='bold', rotation=90, labelpad=8,
         )
         axes[row, 0].imshow(pil_img)
@@ -410,7 +410,7 @@ def plot_attention_grid(found_images, models_dict, output_path):
             badge_text = "correct" if correct else "incorrect"
             axes[row, col].set_title(
                 f"Pred: {CLASS_NAMES[pred_cls]} ({badge_text}, {pred_prob:.0%})",
-                fontsize=7.5, color=badge_col, pad=3,
+                fontsize=30, color=badge_col, pad=3,
             )
 
             # attention entropy below the subplot
@@ -420,13 +420,13 @@ def plot_attention_grid(found_images, models_dict, output_path):
                 f"H = {ent:.2f} bits",
                 transform=axes[row, col].transAxes,
                 ha="center", va="top",
-                fontsize=9, color="#444444", fontstyle="italic",
+                fontsize=30, color="#444444", fontstyle="italic",
             )
 
     plt.suptitle(
         "Glaucoma Detection — Attention Maps per Class and Model\n"
         "ViT models: attention rollout   |   ResNet50: Grad-CAM",
-        fontsize=12, y=1.01,
+        fontsize=40, y=1.01,
     )
 
     plt.tight_layout()
@@ -438,7 +438,7 @@ def plot_attention_grid(found_images, models_dict, output_path):
     scalar_map.set_array([])
     cbar_ax = fig.add_axes([0.12, 0.02, 0.78, 0.018])
     cbar    = fig.colorbar(scalar_map, cax=cbar_ax, orientation="horizontal")
-    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=8)
+    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=30)
     cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
     cbar.ax.tick_params(labelsize=7)
 

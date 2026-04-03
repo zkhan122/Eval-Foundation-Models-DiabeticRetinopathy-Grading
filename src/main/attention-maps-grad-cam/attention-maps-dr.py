@@ -333,12 +333,12 @@ def plot_attention_grid(found_images, models_dict, output_path):
     # column headers — DR grade names
     for col, cls_idx in enumerate(class_indices):
         axes[0, col].set_title(CLASS_NAMES[cls_idx],
-                               fontsize=13, fontweight='bold', pad=8)
+                               fontsize=30, fontweight='bold', pad=8)
 
     # row labels on the left — Original then model names
     row_labels = ["Original"] + model_names
     for row, label in enumerate(row_labels):
-        axes[row, 0].set_ylabel(label, fontsize=12, fontweight='bold',
+        axes[row, 0].set_ylabel(label, fontsize=25, fontweight='bold',
                                 rotation=90, labelpad=10)
 
     for col, cls_idx in enumerate(class_indices):
@@ -372,7 +372,7 @@ def plot_attention_grid(found_images, models_dict, output_path):
             badge_text = "correct" if correct else "incorrect"
             axes[row, col].set_title(
                 f"Pred: {CLASS_NAMES[pred_cls]}\n({badge_text}, {pred_prob:.0%})",
-                fontsize=10, color=badge_col, pad=4,
+                fontsize=30, color=badge_col, pad=4,
             )
 
             # entropy label beneath subplot
@@ -382,12 +382,12 @@ def plot_attention_grid(found_images, models_dict, output_path):
                 f"H = {ent:.2f} bits",
                 transform=axes[row, col].transAxes,
                 ha="center", va="top",
-                fontsize=10, color="#444444", fontstyle="italic",
+                fontsize=30, color="#444444", fontstyle="italic",
             )
 
     plt.suptitle(
         "DR Severity Grading — Attention Rollout per Grade and Model",
-        fontsize=14, y=1.01,
+        fontsize=40, y=1.01,
     )
 
     plt.tight_layout()
@@ -399,7 +399,7 @@ def plot_attention_grid(found_images, models_dict, output_path):
     scalar_map.set_array([])
     cbar_ax = fig.add_axes([0.12, 0.02, 0.78, 0.015])
     cbar    = fig.colorbar(scalar_map, cax=cbar_ax, orientation="horizontal")
-    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=10)
+    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=40)
     cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
     cbar.ax.tick_params(labelsize=9)
 
