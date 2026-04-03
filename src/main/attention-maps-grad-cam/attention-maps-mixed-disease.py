@@ -259,7 +259,7 @@ def plot_attention_grid(found_images, models_dict, output_path):
     # column headers — disease class names
     for col, cls_idx in enumerate(class_indices):
         axes[0, col].set_title(ODIR_CLASS_NAMES[cls_idx],
-                               fontsize=20, fontweight='bold', pad=8)
+                               fontsize=30, fontweight='bold', pad=8)
 
     # row labels on the left
     row_labels = ["Original"] + model_names
@@ -308,7 +308,7 @@ def plot_attention_grid(found_images, models_dict, output_path):
 
             axes[row, col].set_title(
                 badge_text,
-                fontsize=20, color=badge_col, pad=4,
+                fontsize=30, color=badge_col, pad=4,
                 linespacing=1.4,
             )
 
@@ -319,13 +319,13 @@ def plot_attention_grid(found_images, models_dict, output_path):
                 f"H = {ent:.2f} bits",
                 transform=axes[row, col].transAxes,
                 ha='center', va='top',
-                fontsize=20, color='#444444', fontstyle='italic',
+                fontsize=30, color='#444444', fontstyle='italic',
             )
 
     plt.suptitle(
         "ODIR-5K Multi-Label — Attention Maps per Disease Class\n"
         "RETFound: attention rollout   |   ResNet50: Grad-CAM",
-        fontsize=25, y=1.01,
+        fontsize=40, y=1.01,
     )
 
     plt.tight_layout(rect=[0, 0.05, 1, 1])
@@ -337,9 +337,9 @@ def plot_attention_grid(found_images, models_dict, output_path):
     scalar_map.set_array([])
     cbar_ax = fig.add_axes([0.12, 0.02, 0.78, 0.012])
     cbar    = fig.colorbar(scalar_map, cax=cbar_ax, orientation="horizontal")
-    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=20)
+    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=40)
     cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
-    cbar.ax.tick_params(labelsize=14)
+    cbar.ax.tick_params(labelsize=30)
 
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
