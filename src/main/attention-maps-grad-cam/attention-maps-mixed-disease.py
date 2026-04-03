@@ -245,45 +245,40 @@ def plot_attention_grid(found_images, models_dict, output_path):
     plt.rcParams.update(PUBLICATION_RC)
 
     class_indices = sorted(found_images.keys())
-    model_names  = list(models_dict.keys())
-    n_rows = len(class_indices)
-    n_cols = 1 + len(model_names)
+    model_names   = list(models_dict.keys())
+    n_cols        = len(class_indices)       # one column per disease class
+    n_rows        = 1 + len(model_names)     # original row + one row per model
 
+    # landscape: 8 disease classes across, 3 rows deep
     fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(3.2 * n_cols, 4.8 * n_rows))
+                             figsize=(3.8 * n_cols, 5.5 * n_rows))
 
-    if n_rows == 1:
-        axes = axes[np.newaxis, :]
+    if n_cols == 1:
+        axes = axes[:, np.newaxis]
 
-    col_headers = ["Original"] + model_names
-    for col, header in enumerate(col_headers):
-        axes[0, col].set_title(header, fontsize=10, fontweight='bold', pad=6)
+    # column headers — disease class names
+    for col, cls_idx in enumerate(class_indices):
+        axes[0, col].set_title(ODIR_CLASS_NAMES[cls_idx],
+                               fontsize=12, fontweight='bold', pad=8)
 
-    for row, cls_idx in enumerate(class_indices):
+    # row labels on the left
+    row_labels = ["Original"] + model_names
+    for row, label in enumerate(row_labels):
+        axes[row, 0].set_ylabel(label, fontsize=12, fontweight='bold',
+                                rotation=90, labelpad=10)
+
+    for col, cls_idx in enumerate(class_indices):
         img_tensor, pil_img, img_path, model_probs = found_images[cls_idx]
 
-        # row ylabel
-        axes[row, 0].set_ylabel(ODIR_CLASS_NAMES[cls_idx], fontsize=10,
-                                fontweight='bold', rotation=90, labelpad=8)
-
-        # original image
-        axes[row, 0].imshow(pil_img)
-        axes[row, 0].set_xticks([])
-        axes[row, 0].set_yticks([])
-        for spine in axes[row, 0].spines.values():
+        # --- original image row ---
+        axes[0, col].imshow(pil_img)
+        axes[0, col].set_xticks([])
+        axes[0, col].set_yticks([])
+        for spine in axes[0, col].spines.values():
             spine.set_visible(False)
 
-        # class name beneath original image
-        axes[row, 0].text(
-            0.5, -0.05,
-            ODIR_CLASS_NAMES[cls_idx],
-            transform=axes[row, 0].transAxes,
-            ha='center', va='top',
-            fontsize=9, fontweight='bold',
-            color='#222222', fontfamily='serif',
-        )
-
-        for col, (model_name, model) in enumerate(models_dict.items(), start=1):
+        # --- one row per model ---
+        for row, (model_name, model) in enumerate(models_dict.items(), start=1):
             if model_name == "RETFound":
                 mask = attention_rollout_timm(model, img_tensor)
             elif model_name == "ResNet50":
@@ -298,15 +293,13 @@ def plot_attention_grid(found_images, models_dict, output_path):
             for spine in axes[row, col].spines.values():
                 spine.set_visible(False)
 
-            # predicted positive classes with probabilities as subtitle
+            # predicted positive classes badge
             pos_preds = model_probs.get(model_name, [])
+            target_name = ODIR_CLASS_NAMES[cls_idx]
             if pos_preds:
-                label_lines = [f"{name}: {prob:.0%}"
-                               for name, prob in pos_preds]
-                badge_text = "\n".join(label_lines)
-                # highlight target class in green, rest in grey
-                target_name = ODIR_CLASS_NAMES[cls_idx]
-                badge_col = "#2ecc71" if any(
+                label_lines = [f"{name}: {prob:.0%}" for name, prob in pos_preds]
+                badge_text  = "\n".join(label_lines)
+                badge_col   = "#2ecc71" if any(
                     name == target_name for name, _ in pos_preds
                 ) else "#e74c3c"
             else:
@@ -315,37 +308,38 @@ def plot_attention_grid(found_images, models_dict, output_path):
 
             axes[row, col].set_title(
                 badge_text,
-                fontsize=6.5, color=badge_col, pad=3,
+                fontsize=9, color=badge_col, pad=4,
                 linespacing=1.4,
             )
 
-            # attention entropy beneath subplot
+            # entropy beneath subplot
             ent = attention_entropy(mask)
             axes[row, col].text(
-                0.5, -0.05,
+                0.5, -0.08,
                 f"H = {ent:.2f} bits",
                 transform=axes[row, col].transAxes,
                 ha='center', va='top',
-                fontsize=8, color='#444444', fontstyle='italic',
+                fontsize=10, color='#444444', fontstyle='italic',
             )
 
     plt.suptitle(
         "ODIR-5K Multi-Label — Attention Maps per Disease Class\n"
         "RETFound: attention rollout   |   ResNet50: Grad-CAM",
-        fontsize=11, y=1.01
+        fontsize=13, y=1.01,
     )
-    plt.tight_layout(rect=[0, 0.04, 1, 1])
-    plt.subplots_adjust(hspace=0.55)
+
+    plt.tight_layout(rect=[0, 0.05, 1, 1])
+    plt.subplots_adjust(hspace=0.5, wspace=0.08)
 
     # shared horizontal colorbar
-    norm = MplNorm(vmin=0, vmax=1)
+    norm       = MplNorm(vmin=0, vmax=1)
     scalar_map = mpl_cm.ScalarMappable(cmap="jet", norm=norm)
     scalar_map.set_array([])
-    cbar_ax = fig.add_axes([0.12, 0.01, 0.78, 0.015])
-    cbar = fig.colorbar(scalar_map, cax=cbar_ax, orientation="horizontal")
-    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=8)
+    cbar_ax = fig.add_axes([0.12, 0.02, 0.78, 0.012])
+    cbar    = fig.colorbar(scalar_map, cax=cbar_ax, orientation="horizontal")
+    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=10)
     cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
-    cbar.ax.tick_params(labelsize=7)
+    cbar.ax.tick_params(labelsize=9)
 
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()

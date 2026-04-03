@@ -316,50 +316,43 @@ def overlay_heatmap(pil_image, mask):
 # -------------------------
 
 def plot_attention_grid(found_images, models_dict, output_path):
-    """
-    Grid: rows = DR grades (0-4), columns = original + one per model.
-
-    Each attention map cell shows:
-      - blended heatmap overlay
-      - subtitle: predicted class, correct/incorrect label, confidence %
-      - below-axes label: attention entropy in bits
-
-    A shared horizontal colorbar is added at the bottom of the figure.
-    """
     plt.rcParams.update(PUBLICATION_RC)
 
     class_indices = sorted(found_images.keys())
     model_names   = list(models_dict.keys())
-    n_rows        = len(class_indices)
-    n_cols        = 1 + len(model_names)
+    n_cols        = len(class_indices)          # one column per DR grade
+    n_rows        = 1 + len(model_names)        # original row + one row per model
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.2 * n_cols, 4.4 * n_rows))
+    # landscape: wide and not too tall
+    fig, axes = plt.subplots(n_rows, n_cols,
+                             figsize=(4.2 * n_cols, 5.2 * n_rows))
 
-    if n_rows == 1:
-        axes = axes[np.newaxis, :]
+    if n_cols == 1:
+        axes = axes[:, np.newaxis]
 
-    # column headers (top row only)
-    col_headers = ["Original"] + model_names
-    for col, header in enumerate(col_headers):
-        axes[0, col].set_title(header, fontsize=11, fontweight='bold', pad=6)
+    # column headers — DR grade names
+    for col, cls_idx in enumerate(class_indices):
+        axes[0, col].set_title(CLASS_NAMES[cls_idx],
+                               fontsize=13, fontweight='bold', pad=8)
 
-    for row, cls_idx in enumerate(class_indices):
+    # row labels on the left — Original then model names
+    row_labels = ["Original"] + model_names
+    for row, label in enumerate(row_labels):
+        axes[row, 0].set_ylabel(label, fontsize=12, fontweight='bold',
+                                rotation=90, labelpad=10)
+
+    for col, cls_idx in enumerate(class_indices):
         img_tensor, pil_img, img_path, model_probs = found_images[cls_idx]
 
-        # --- original image column ---
-        axes[row, 0].set_ylabel(
-            CLASS_NAMES[cls_idx], fontsize=10,
-            fontweight='bold', rotation=90, labelpad=8,
-        )
-        axes[row, 0].imshow(pil_img)
-        # use individual spine/tick removal so ylabel is preserved
-        axes[row, 0].set_xticks([])
-        axes[row, 0].set_yticks([])
-        for spine in axes[row, 0].spines.values():
+        # --- original image row ---
+        axes[0, col].imshow(pil_img)
+        axes[0, col].set_xticks([])
+        axes[0, col].set_yticks([])
+        for spine in axes[0, col].spines.values():
             spine.set_visible(False)
 
-        # --- attention map columns ---
-        for col, (model_name, model) in enumerate(models_dict.items(), start=1):
+        # --- one row per model ---
+        for row, (model_name, model) in enumerate(models_dict.items(), start=1):
             if model_name == "CLIP":
                 mask = attention_rollout_clip(model, img_tensor)
             else:
@@ -372,48 +365,47 @@ def plot_attention_grid(found_images, models_dict, output_path):
             for spine in axes[row, col].spines.values():
                 spine.set_visible(False)
 
-            # prediction confidence badge
+            # prediction badge as subplot title
             pred_cls, pred_prob = model_probs[model_name]
             correct    = (pred_cls == cls_idx)
             badge_col  = "#2ecc71" if correct else "#e74c3c"
             badge_text = "correct" if correct else "incorrect"
             axes[row, col].set_title(
-                f"Pred: {CLASS_NAMES[pred_cls]} ({badge_text}, {pred_prob:.0%})",
-                fontsize=7.5, color=badge_col, pad=3,
+                f"Pred: {CLASS_NAMES[pred_cls]}\n({badge_text}, {pred_prob:.0%})",
+                fontsize=10, color=badge_col, pad=4,
             )
 
-            # attention entropy below the subplot
+            # entropy label beneath subplot
             ent = attention_entropy(mask)
             axes[row, col].text(
-                0.5, -0.10,
+                0.5, -0.08,
                 f"H = {ent:.2f} bits",
                 transform=axes[row, col].transAxes,
                 ha="center", va="top",
-                fontsize=9, color="#444444", fontstyle="italic",
+                fontsize=10, color="#444444", fontstyle="italic",
             )
 
     plt.suptitle(
         "DR Severity Grading — Attention Rollout per Grade and Model",
-        fontsize=12, y=1.01,
+        fontsize=14, y=1.01,
     )
 
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.08, hspace=0.45)   # hspace separates rows; bottom makes room for colorbar
+    plt.subplots_adjust(bottom=0.07, hspace=0.5, wspace=0.08)
 
     # shared colorbar
     norm       = Normalize(vmin=0, vmax=1)
     scalar_map = mpl_cm.ScalarMappable(cmap="jet", norm=norm)
     scalar_map.set_array([])
-    cbar_ax = fig.add_axes([0.12, 0.02, 0.78, 0.018])
+    cbar_ax = fig.add_axes([0.12, 0.02, 0.78, 0.015])
     cbar    = fig.colorbar(scalar_map, cax=cbar_ax, orientation="horizontal")
-    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=8)
+    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=10)
     cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
-    cbar.ax.tick_params(labelsize=7)
+    cbar.ax.tick_params(labelsize=9)
 
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"Saved: {output_path}")
-
 
 # -------------------------
 # main
