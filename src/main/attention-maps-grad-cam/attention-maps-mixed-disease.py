@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from PIL import Image
 from torchvision import transforms
+from scipy.stats import entropy
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
@@ -34,6 +35,15 @@ PUBLICATION_RC = {
 THRESHOLD = 0.5
 
 
+def attention_entropy(mask):
+    flat  = mask.flatten().astype(np.float64)
+    flat  = np.clip(flat, 0, None)
+    total = flat.sum()
+    if total == 0:
+        return 0.0
+    prob = flat / total
+    return float(entropy(prob, base=2))
+
 
 def load_retfound(checkpoint_path):
     ckpt     = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -43,9 +53,9 @@ def load_retfound(checkpoint_path):
         num_classes=NUM_CLASSES, drop_path_rate=0.2, global_pool=True
     )
     pretrained_path = f"{SRC_DIR}/models/RETFound_MAE/weights/RETFound_cfp_weights.pth"
-    pretrained      = torch.load(pretrained_path, map_location="cpu", weights_only=False)
-    ckpt_model      = pretrained["model"]
-    state_dict      = model.state_dict()
+    pretrained  = torch.load(pretrained_path, map_location="cpu", weights_only=False)
+    ckpt_model  = pretrained["model"]
+    state_dict  = model.state_dict()
     for k in ["head.weight", "head.bias"]:
         if k in ckpt_model and ckpt_model[k].shape != state_dict[k].shape:
             del ckpt_model[k]
@@ -153,12 +163,6 @@ def gradcam_resnet(model, image_tensor, target_class):
 # image selection
 
 def find_representative_images(models_dict, dataset):
-    """
-    For each of the 8 ODIR disease classes, find the first image where:
-      - the ground truth label for that class is 1
-      - ALL models correctly predict that class as positive
-    Returns dict: {class_idx: (img_tensor, pil_img, img_path)}
-    """
     transform_tensor = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -173,10 +177,9 @@ def find_representative_images(models_dict, dataset):
         if not needed:
             break
 
-        img_path  = dataset.image_paths[idx]
-        true_label = dataset.labels[idx]   # (8,) float array
+        img_path   = dataset.image_paths[idx]
+        true_label = dataset.labels[idx]
 
-        # find which needed classes this image is positive for
         positive_needed = [c for c in needed if true_label[c] == 1.0]
         if not positive_needed:
             continue
@@ -185,21 +188,32 @@ def find_representative_images(models_dict, dataset):
         img_tensor = transform_tensor(pil_img).unsqueeze(0)
 
         for cls_idx in positive_needed:
-            all_correct = True
+            all_correct  = True
+            model_probs  = {}   # model_name -> list of (class_name, prob) for predicted positives
+
             for model_name, model in models_dict.items():
                 with torch.no_grad():
                     if model_name == "ResNet50":
                         logits = model(pixel_values=img_tensor.to(DEVICE)).logits
                     else:
                         logits = model(img_tensor.to(DEVICE))
-                    prob      = torch.sigmoid(logits)[0, cls_idx].item()
-                    predicted = 1 if prob >= THRESHOLD else 0
-                    if predicted != 1:
+                    probs     = torch.sigmoid(logits)[0]   # (8,)
+                    predicted = (probs >= THRESHOLD).int().cpu().numpy()
+
+                    # capture all predicted positive classes and their probs
+                    pos_preds = [
+                        (ODIR_CLASS_NAMES[i], float(probs[i]))
+                        for i in range(NUM_CLASSES) if predicted[i] == 1
+                    ]
+                    model_probs[model_name] = pos_preds
+
+                    if predicted[cls_idx] != 1:
                         all_correct = False
                         break
 
             if all_correct:
-                found[cls_idx] = (img_tensor, transform_display(pil_img), img_path)
+                found[cls_idx] = (img_tensor, transform_display(pil_img),
+                                  img_path, model_probs)
                 needed.discard(cls_idx)
                 print(f"Found image for class '{ODIR_CLASS_NAMES[cls_idx]}': "
                       f"{os.path.basename(img_path)}")
@@ -209,7 +223,6 @@ def find_representative_images(models_dict, dataset):
               f"{[ODIR_CLASS_NAMES[c] for c in sorted(needed)]}")
 
     return found
-
 
 # overlay helper
 
@@ -226,15 +239,18 @@ def overlay_heatmap(pil_image, mask):
 # plotting
 
 def plot_attention_grid(found_images, models_dict, output_path):
+    from matplotlib.colors import Normalize as MplNorm
+    from matplotlib import cm as mpl_cm
+
     plt.rcParams.update(PUBLICATION_RC)
 
     class_indices = sorted(found_images.keys())
-    model_names   = list(models_dict.keys())
-    n_rows        = len(class_indices)
-    n_cols        = 1 + len(model_names)
+    model_names  = list(models_dict.keys())
+    n_rows = len(class_indices)
+    n_cols = 1 + len(model_names)
 
     fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(3.2 * n_cols, 4.0 * n_rows))
+                             figsize=(3.2 * n_cols, 4.8 * n_rows))
 
     if n_rows == 1:
         axes = axes[np.newaxis, :]
@@ -244,9 +260,9 @@ def plot_attention_grid(found_images, models_dict, output_path):
         axes[0, col].set_title(header, fontsize=10, fontweight='bold', pad=6)
 
     for row, cls_idx in enumerate(class_indices):
-        img_tensor, pil_img, img_path = found_images[cls_idx]
+        img_tensor, pil_img, img_path, model_probs = found_images[cls_idx]
 
-        # row ylabel on the left
+        # row ylabel
         axes[row, 0].set_ylabel(ODIR_CLASS_NAMES[cls_idx], fontsize=10,
                                 fontweight='bold', rotation=90, labelpad=8)
 
@@ -257,9 +273,9 @@ def plot_attention_grid(found_images, models_dict, output_path):
         for spine in axes[row, 0].spines.values():
             spine.set_visible(False)
 
-        # class name text label beneath the original image
+        # class name beneath original image
         axes[row, 0].text(
-            0.5, -0.08,
+            0.5, -0.05,
             ODIR_CLASS_NAMES[cls_idx],
             transform=axes[row, 0].transAxes,
             ha='center', va='top',
@@ -282,12 +298,55 @@ def plot_attention_grid(found_images, models_dict, output_path):
             for spine in axes[row, col].spines.values():
                 spine.set_visible(False)
 
+            # predicted positive classes with probabilities as subtitle
+            pos_preds = model_probs.get(model_name, [])
+            if pos_preds:
+                label_lines = [f"{name}: {prob:.0%}"
+                               for name, prob in pos_preds]
+                badge_text = "\n".join(label_lines)
+                # highlight target class in green, rest in grey
+                target_name = ODIR_CLASS_NAMES[cls_idx]
+                badge_col = "#2ecc71" if any(
+                    name == target_name for name, _ in pos_preds
+                ) else "#e74c3c"
+            else:
+                badge_text = "no positives predicted"
+                badge_col  = "#e74c3c"
+
+            axes[row, col].set_title(
+                badge_text,
+                fontsize=6.5, color=badge_col, pad=3,
+                linespacing=1.4,
+            )
+
+            # attention entropy beneath subplot
+            ent = attention_entropy(mask)
+            axes[row, col].text(
+                0.5, -0.05,
+                f"H = {ent:.2f} bits",
+                transform=axes[row, col].transAxes,
+                ha='center', va='top',
+                fontsize=8, color='#444444', fontstyle='italic',
+            )
+
     plt.suptitle(
         "ODIR-5K Multi-Label — Attention Maps per Disease Class\n"
         "RETFound: attention rollout   |   ResNet50: Grad-CAM",
         fontsize=11, y=1.01
     )
-    plt.tight_layout(rect=[0, 0.02, 1, 1])
+    plt.tight_layout(rect=[0, 0.04, 1, 1])
+    plt.subplots_adjust(hspace=0.55)
+
+    # shared horizontal colorbar
+    norm = MplNorm(vmin=0, vmax=1)
+    scalar_map = mpl_cm.ScalarMappable(cmap="jet", norm=norm)
+    scalar_map.set_array([])
+    cbar_ax = fig.add_axes([0.12, 0.01, 0.78, 0.015])
+    cbar = fig.colorbar(scalar_map, cax=cbar_ax, orientation="horizontal")
+    cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=8)
+    cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
+    cbar.ax.tick_params(labelsize=7)
+
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"Saved: {output_path}")
@@ -295,8 +354,8 @@ def plot_attention_grid(found_images, models_dict, output_path):
 # main
 
 def main():
-    csv_path     = f"{DATA_DIR}/ODIR-5K/full_df.csv"
-    img_dir      = f"{DATA_DIR}/ODIR-5K/training"
+    csv_path = f"{DATA_DIR}/ODIR-5K/full_df.csv"
+    img_dir = f"{DATA_DIR}/ODIR-5K/training"
 
     test_transformations = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -327,7 +386,7 @@ def main():
 
     print(f"\nFound images for {len(found_images)}/{NUM_CLASSES} classes.")
 
-    output_dir = "../../../plots/attention-maps"
+    output_dir = "../../plots/attention-maps"
     os.makedirs(output_dir, exist_ok=True)
 
     plot_attention_grid(
