@@ -360,7 +360,7 @@ def plot_attention_grid(found_images, models_dict, output_path):
     n_rows        = len(class_indices)
     n_cols        = 1 + len(model_names)
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.2 * n_cols, 4.4 * n_rows))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.5 * n_cols, 6.5 * n_rows))
 
     if n_rows == 1:
         axes = axes[np.newaxis, :]
@@ -410,13 +410,13 @@ def plot_attention_grid(found_images, models_dict, output_path):
             badge_text = "correct" if correct else "incorrect"
             axes[row, col].set_title(
                 f"Pred: {CLASS_NAMES[pred_cls]} ({badge_text}, {pred_prob:.0%})",
-                fontsize=30, color=badge_col, pad=3,
+                fontsize=30, color=badge_col, pad=18,
             )
 
             # attention entropy below the subplot
             ent = attention_entropy(mask)
             axes[row, col].text(
-                0.5, -0.10,
+                0.5, -0.22,
                 f"H = {ent:.2f} bits",
                 transform=axes[row, col].transAxes,
                 ha="center", va="top",
@@ -430,14 +430,21 @@ def plot_attention_grid(found_images, models_dict, output_path):
     )
 
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.08, hspace=0.45)   # hspace separates rows; bottom makes room for colorbar
+
+    plt.subplots_adjust(
+        left=0.18,    # prevents ylabel clipping
+        right=0.98,
+        top=0.82,     # MORE space for suptitle
+        bottom=0.14,  # MORE space for entropy + colorbar
+        hspace=0.75   # CRITICAL: separates rows
+    )
 
     # shared colorbar
-    norm       = Normalize(vmin=0, vmax=1)
+    norm = Normalize(vmin=0, vmax=1)
     scalar_map = mpl_cm.ScalarMappable(cmap="jet", norm=norm)
     scalar_map.set_array([])
-    cbar_ax = fig.add_axes([0.12, 0.02, 0.78, 0.018])
-    cbar    = fig.colorbar(scalar_map, cax=cbar_ax, orientation="horizontal")
+    cbar_ax = fig.add_axes([0.2, 0.05, 0.6, 0.025])
+    cbar = fig.colorbar(scalar_map, cax=cbar_ax, orientation="horizontal")
     cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=30)
     cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
     cbar.ax.tick_params(labelsize=7)
@@ -451,8 +458,8 @@ def plot_attention_grid(found_images, models_dict, output_path):
 
 def main():
     root_dirs = {
-        "G1020":            f"{DATA_DIR}/G1020",
-        "ORIGA":            f"{DATA_DIR}/ORIGA",
+        "G1020": f"{DATA_DIR}/G1020",
+        "ORIGA": f"{DATA_DIR}/ORIGA",
         "EYEPACS_GLAUCOMA": f"{DATA_DIR}/EYEPACS_GLAUCOMA",
     }
 
