@@ -410,7 +410,7 @@ def plot_attention_grid(found_images, models_dict, output_path):
             badge_text = "correct" if correct else "incorrect"
             axes[row, col].set_title(
                 f"{model_name}\nPred: {CLASS_NAMES[pred_cls]} ({badge_text}, {pred_prob:.0%})",
-                fontsize=9, color=badge_col, pad=3, fontweight='bold'
+                fontsize=20, color=badge_col, pad=3, fontweight='bold'
             )
             # attention entropy below the subplot
             ent = attention_entropy(mask)
@@ -429,13 +429,13 @@ def plot_attention_grid(found_images, models_dict, output_path):
     )
 
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.08, hspace=0.45)   # hspace separates rows; bottom makes room for colorbar
+    plt.subplots_adjust(bottom=0.12, hspace=0.45)   # hspace separates rows; bottom makes room for colorbar
 
     # shared colorbar
     norm       = Normalize(vmin=0, vmax=1)
     scalar_map = mpl_cm.ScalarMappable(cmap="jet", norm=norm)
     scalar_map.set_array([])
-    cbar_ax = fig.add_axes([0.12, 0.02, 0.78, 0.018])
+    cbar_ax = fig.add_axes([0.12, 0.04, 0.78, 0.018])
     cbar    = fig.colorbar(scalar_map, cax=cbar_ax, orientation="horizontal")
     cbar.set_label("Normalised attention weight  (0 = low,  1 = high)", fontsize=8)
     cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
@@ -483,7 +483,7 @@ def main():
         print("Could not find jointly-correct images for all classes. Exiting.")
         return
 
-    output_dir = "../../../plots/attention-maps"
+    output_dir = "../../plots/attention-maps"
     os.makedirs(output_dir, exist_ok=True)
 
     plot_attention_grid(
